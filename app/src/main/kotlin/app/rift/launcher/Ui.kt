@@ -1476,7 +1476,60 @@ fun ConfigPage(
                 options = listOf("Both", "Left", "Right"),
                 selected = settings.int(Keys.STREAM_EDGE, 0).coerceIn(0, 2),
             ) { settings.putInt(Keys.STREAM_EDGE, it) }
-            MonoNote("A floating overlay that sits over other apps is planned for a later update.")
+            Kicker("Floating HUD over other apps", color = Cyber.muted)
+            var canDraw by remember { mutableStateOf(HudControl.canDraw(context)) }
+            LaunchedEffect(Unit) {
+                while (true) {
+                    canDraw = HudControl.canDraw(context)
+                    delay(1_500)
+                }
+            }
+            ToggleRow("Show floating HUD", settings.bool(Keys.HUD_ON, false)) { on ->
+                settings.putBool(Keys.HUD_ON, on)
+                if (on && !canDraw) {
+                    safeStart(
+                        context,
+                        Intent(
+                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:${context.packageName}"),
+                        ),
+                    )
+                }
+            }
+            MonoNote(
+                if (canDraw) "Permission to draw over other apps: granted."
+                else "Needs permission to draw over other apps. Switch it on, then allow RIFT in the screen that opens."
+            )
+            ToggleRow("Time", settings.bool(Keys.HUD_TIME, true)) { settings.putBool(Keys.HUD_TIME, it) }
+            ToggleRow("Battery", settings.bool(Keys.HUD_BATTERY, true)) { settings.putBool(Keys.HUD_BATTERY, it) }
+            ToggleRow("Weather", settings.bool(Keys.HUD_WEATHER, true)) { settings.putBool(Keys.HUD_WEATHER, it) }
+            ToggleRow("Notification count", settings.bool(Keys.HUD_NOTES, true)) {
+                settings.putBool(Keys.HUD_NOTES, it)
+            }
+            ToggleRow("Hide while RIFT is open", settings.bool(Keys.HUD_HIDE_HOME, true)) {
+                settings.putBool(Keys.HUD_HIDE_HOME, it)
+            }
+            ChoiceRow(
+                label = "HUD text size",
+                options = listOf("Small", "Medium", "Large"),
+                selected = settings.int(Keys.HUD_SIZE, 1).coerceIn(0, 2),
+            ) { settings.putInt(Keys.HUD_SIZE, it) }
+            ChoiceRow(
+                label = "HUD background",
+                options = listOf("Light", "Medium", "Solid"),
+                selected = settings.int(Keys.HUD_ALPHA, 1).coerceIn(0, 2),
+            ) { settings.putInt(Keys.HUD_ALPHA, it) }
+            RiftButton("Reset HUD position", Modifier.fillMaxWidth()) {
+                settings.putInt(Keys.HUD_X, -1)
+                settings.putInt(Keys.HUD_Y, -1)
+                HudControl.apply(context, settings)
+            }
+            MonoNote("Drag the HUD to move it. Tap it to see notifications, the torch and a way back to RIFT.")
+            val hudKey = listOf(
+                Keys.HUD_ON, Keys.HUD_TIME, Keys.HUD_BATTERY, Keys.HUD_WEATHER, Keys.HUD_NOTES,
+                Keys.HUD_HIDE_HOME, Keys.HUD_SIZE, Keys.HUD_ALPHA, Keys.HUD_X, Keys.HUD_Y,
+            ).joinToString { settings.str(it, "") + settings.int(it, -2) + settings.bool(it, false) }
+            LaunchedEffect(hudKey, canDraw) { HudControl.apply(context, settings) }
         }
 
         Section("Folders") {

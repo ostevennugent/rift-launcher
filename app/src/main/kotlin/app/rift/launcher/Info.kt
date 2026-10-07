@@ -334,6 +334,7 @@ class InfoController(
                     InfoFetcher.fetchWeather(settings, city, fahrenheit)
                 }
                 weatherError = null
+                weather?.let { settings.putStr(Keys.WEATHER_TEXT, "${it.temp}°${it.unit}") }
             } catch (e: Exception) {
                 weatherError = e.message ?: "Weather unavailable"
             }

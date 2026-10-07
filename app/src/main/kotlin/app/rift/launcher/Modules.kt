@@ -109,7 +109,7 @@ fun CommsModule(info: InfoController) {
 }
 
 /** Opens the notification's own screen, or at least its app, when it is tapped. */
-private fun openNote(context: android.content.Context, n: NoteItem) {
+internal fun openNote(context: android.content.Context, n: NoteItem) {
     var opened = false
     val pending = n.intent
     if (pending != null) {

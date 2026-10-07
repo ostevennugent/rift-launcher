@@ -24,6 +24,13 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         resumeSignal.intValue++
+        HudService.launcherVisible = true
+        HudControl.apply(this, SettingsState(getSharedPreferences("rift", MODE_PRIVATE)))
+    }
+
+    override fun onPause() {
+        HudService.launcherVisible = false
+        super.onPause()
     }
 
     private var widgets: WidgetHostController? = null
