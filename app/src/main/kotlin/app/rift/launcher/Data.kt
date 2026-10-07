@@ -92,6 +92,9 @@ object Keys {
     const val SHADE_NOTES = "shade_notes"
     const val FOLDERS = "folders"
     const val WIDGETS = "widgets"
+    const val STRIP_SHOW = "strip_show"
+    const val TAB_STYLE = "tab_style"
+    const val SHADE_TOOLS = "shade_tools"
     const val WEATHER_TEXT = "weather_text"
     const val HUD_ON = "hud_on"
     const val HUD_TIME = "hud_time"
@@ -119,9 +122,7 @@ val BriefModules = listOf(
     "media" to "Now playing",
     "headlines" to "Headlines",
     "vitals" to "Device vitals",
-    "widgets" to "Widgets",
     "status" to "Status plate",
-    "quick" to "Quick apps",
 )
 
 /**

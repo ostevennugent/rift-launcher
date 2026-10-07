@@ -94,9 +94,8 @@ import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
 private const val PAGE_BRIEF = 0
-private const val PAGE_APPS = 1
-private const val PAGE_DECK = 2
-private const val PAGE_CONFIG = 3
+private const val PAGE_HOME = 1
+private const val PAGE_CONFIG = 2
 
 private const val SIX_HOURS_MS = 6 * 60 * 60 * 1000L
 
@@ -119,15 +118,16 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int, re
     val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
     val pagerState = rememberPagerState(
-        initialPage = settings.int(Keys.START_PAGE, 0).coerceIn(0, 2),
-        pageCount = { 4 },
+        initialPage = settings.int(Keys.START_PAGE, 0).coerceIn(0, 1),
+        pageCount = { 3 },
     )
     val updates = remember { UpdateController(context.applicationContext, settings, scope) }
     val info = remember { InfoController(context.applicationContext, settings, scope) }
     val tools = remember { ToolsState() }
     val calc = remember { CalcState() }
     var shadeOpen by remember { mutableStateOf(false) }
-    var searchSignal by remember { mutableIntStateOf(0) }
+    var drawerOpen by remember { mutableStateOf(false) }
+    var drawerFocus by remember { mutableStateOf(false) }
     var configScreen by remember { mutableStateOf("") }
     var openFolder by remember { mutableStateOf<String?>(null) }
     var addTarget by remember { mutableStateOf<AppInfo?>(null) }
@@ -234,6 +234,7 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int, re
         if (homeSignal > 0) {
             focusManager.clearFocus()
             shadeOpen = false
+            drawerOpen = false
             pagerState.animateScrollToPage(PAGE_BRIEF)
         }
     }
@@ -249,7 +250,7 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int, re
     }
 
     // Back steps "up" to Brief from the other pages.
-    BackHandler(enabled = !shadeOpen) {
+    BackHandler(enabled = !shadeOpen && !drawerOpen) {
         if (pagerState.currentPage == PAGE_CONFIG && configScreen.isNotEmpty()) {
             configScreen = configScreen.substringBeforeLast('/', "")
         } else if (pagerState.currentPage != PAGE_BRIEF) {
@@ -272,12 +273,16 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int, re
     val runAction: (String) -> Unit = { action ->
         when (action) {
             "shade" -> shadeOpen = true
-            "search" -> scope.launch {
-                pagerState.animateScrollToPage(PAGE_APPS)
-                searchSignal++
+            "search" -> {
+                drawerFocus = true
+                drawerOpen = true
             }
-            "apps" -> scope.launch { pagerState.animateScrollToPage(PAGE_APPS) }
-            "deck" -> scope.launch { pagerState.animateScrollToPage(PAGE_DECK) }
+            "apps" -> {
+                drawerFocus = false
+                drawerOpen = true
+            }
+            "deck" -> shadeOpen = true
+            "home" -> scope.launch { pagerState.animateScrollToPage(PAGE_HOME) }
             "brief" -> scope.launch { pagerState.animateScrollToPage(PAGE_BRIEF) }
             "config" -> openConfig()
             else -> Unit
@@ -295,13 +300,6 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int, re
             thresholdPx,
             onDown = if (gDown == "none") null else ({ currentRun(gDown) }),
             onUp = if (gUp == "none") null else ({ currentRun(gUp) }),
-        )
-    }
-    val edgeDownOnly = remember(thresholdPx, gDown) {
-        EdgeSwipe(
-            thresholdPx,
-            onDown = if (gDown == "none") null else ({ currentRun(gDown) }),
-            onUp = null,
         )
     }
 
@@ -326,7 +324,9 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int, re
                 .systemBarsPadding()
                 .imePadding()
         ) {
-            StatusStrip(settings = settings, onOpenConfig = openConfig)
+            if (settings.bool(Keys.STRIP_SHOW, false)) {
+                StatusStrip(settings = settings, onOpenConfig = openConfig)
+            }
             HorizontalPager(state = pagerState, modifier = Modifier.weight(1f)) { page ->
                 when (page) {
                     PAGE_BRIEF -> BriefPage(
@@ -341,15 +341,14 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int, re
                         onLaunch = launchApp,
                         onOpenConfig = openConfig,
                     )
-                    PAGE_APPS -> AppsPage(
-                        apps = visibleApps,
+                    PAGE_HOME -> HomePage(
                         settings = settings,
-                        edge = edgeDownOnly,
-                        focusSignal = searchSignal,
+                        apps = apps,
+                        edge = edge,
+                        onLongPress = { currentRun(gLong) },
+                        onDoubleTap = { currentRun(gDouble) },
                         onLaunch = launchApp,
-                        onOpenConfig = openConfig,
                     )
-                    PAGE_DECK -> DeckPage(settings = settings, tools = tools, calc = calc)
                     else -> ConfigPage(
                         settings = settings,
                         apps = apps,
@@ -365,13 +364,30 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int, re
                 Dock(apps = apps, settings = settings, onLaunch = launchApp)
             }
             if (settings.showTabBar) {
-                TabBar(
+                PageBar(
                     current = pagerState.currentPage,
+                    style = settings.int(Keys.TAB_STYLE, 0),
                     onSelect = { scope.launch { pagerState.animateScrollToPage(it) } },
+                    onConfig = openConfig,
                 )
             }
         }
-        Shade(open = shadeOpen, info = info, settings = settings, onClose = { shadeOpen = false })
+        AppDrawer(
+            open = drawerOpen,
+            apps = visibleApps,
+            settings = settings,
+            autoFocus = drawerFocus,
+            onLaunch = launchApp,
+            onClose = { drawerOpen = false },
+        )
+        Shade(
+            open = shadeOpen,
+            info = info,
+            settings = settings,
+            tools = tools,
+            calc = calc,
+            onClose = { shadeOpen = false },
+        )
         if (settings.scanlines) {
             Scanlines()
         }
@@ -453,7 +469,7 @@ fun Plate(
         modifier
             .fillMaxWidth()
             .plate(highlight)
-            .padding(14.dp),
+            .padding(12.dp),
         content = content,
     )
 }
@@ -610,7 +626,7 @@ fun BriefPage(
     }
     val pattern = (if (use24h) "HH:mm" else "h:mm") + (if (showSeconds) ":ss" else "")
     val timeText = now.format(DateTimeFormatter.ofPattern(pattern))
-    val baseSize = listOf(56, 72, 92)[settings.int(Keys.CLOCK_SIZE, 1).coerceIn(0, 2)]
+    val baseSize = listOf(48, 60, 76)[settings.int(Keys.CLOCK_SIZE, 1).coerceIn(0, 2)]
     val clockSize = baseSize * (if (showSeconds) 0.72f else 1f)
     val dateText = now.format(DateTimeFormatter.ofPattern("EEEE, MMM d")).uppercase()
     val greeting = when {
@@ -621,73 +637,41 @@ fun BriefPage(
     }
     val modules = settings.moduleOrder.filter { it !in settings.hiddenModules }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .pointerInput(Unit) {
-                detectTapGestures(onLongPress = { onLongPress() }, onDoubleTap = { onDoubleTap() })
-            }
-            .nestedScroll(edge)
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Spacer(Modifier.height(4.dp))
-
-        when (val st = updates.status) {
-            is UpdateStatus.Available -> NoticePlate(
-                "Update",
-                "A new build is available",
-                "Build ${st.info.sha.take(7)}. Tap to review in Config.",
-                onOpenConfig,
-            )
-            is UpdateStatus.Downloading -> NoticePlate(
-                "Update",
-                "Downloading update",
-                "${(st.progress * 100).toInt()}% done.",
-                onOpenConfig,
-            )
-            is UpdateStatus.Ready -> NoticePlate(
-                "Update",
-                "Update downloaded",
-                "Tap to finish installing in Config.",
-                onOpenConfig,
-            )
-            else -> Unit
-        }
-
-        if (settings.bool(Keys.DEFAULT_REMINDER, true) && !isDefault) {
-            NoticePlate(
-                "Action",
-                "Make RIFT your home screen",
-                "Tap here, then pick RIFT under Home app.",
-            ) { safeStart(context, Intent(Settings.ACTION_HOME_SETTINGS)) }
-        }
-
-        modules.forEach { id ->
+    @Composable
+    fun Mod(id: String) {
             when (id) {
                 "clock" -> Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                    modifier = Modifier.weight(1f, fill = false),
-                    text = timeText,
-                    fontSize = clockSize.sp,
-                    lineHeight = (clockSize * 1.05f).sp,
-                    fontWeight = FontWeight.Medium,
-                    letterSpacing = (-2).sp,
-                    maxLines = 1,
-                    softWrap = false,
-                    style = TextStyle(
-                        shadow = if (settings.glow) {
-                            Shadow(color = primary.copy(alpha = 0.6f), blurRadius = 36f)
-                        } else {
-                            null
-                        },
-                    ),
-                )
+                    Column(Modifier.weight(1f, fill = false)) {
+                        Text(
+                            text = timeText,
+                            fontSize = clockSize.sp,
+                            lineHeight = (clockSize * 1.05f).sp,
+                            fontWeight = FontWeight.Medium,
+                            letterSpacing = (-2).sp,
+                            maxLines = 1,
+                            softWrap = false,
+                            style = TextStyle(
+                                shadow = if (settings.glow) {
+                                    Shadow(color = primary.copy(alpha = 0.6f), blurRadius = 36f)
+                                } else {
+                                    null
+                                },
+                            ),
+                        )
+                        if ("date" in modules) {
+                            Text(
+                                text = dateText,
+                                color = Cyber.muted,
+                                fontFamily = PlexMono,
+                                fontSize = 11.sp,
+                                letterSpacing = 2.sp,
+                            )
+                        }
+                    }
                     val side = info.weather
                     if (side != null && "weather" in modules) {
                         WeatherSide(side, Modifier.padding(start = 8.dp))
@@ -736,11 +720,70 @@ fun BriefPage(
                 "media" -> MediaModule(info)
                 "headlines" -> HeadlinesModule(info)
                 "vitals" -> VitalsModule()
-                "widgets" -> WidgetsModule()
-                "quick" -> QuickApps(settings = settings, apps = apps, onLaunch = onLaunch)
                 else -> Unit
             }
+    }
+    val shown = modules.filter { !(it == "date" && "clock" in modules) }
+    val half = setOf("status", "vitals")
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                detectTapGestures(onLongPress = { onLongPress() }, onDoubleTap = { onDoubleTap() })
+            }
+            .nestedScroll(edge)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 14.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+
+        when (val st = updates.status) {
+            is UpdateStatus.Available -> NoticePlate(
+                "Update",
+                "A new build is available",
+                "Build ${st.info.sha.take(7)}. Tap to review in Config.",
+                onOpenConfig,
+            )
+            is UpdateStatus.Downloading -> NoticePlate(
+                "Update",
+                "Downloading update",
+                "${(st.progress * 100).toInt()}% done.",
+                onOpenConfig,
+            )
+            is UpdateStatus.Ready -> NoticePlate(
+                "Update",
+                "Update downloaded",
+                "Tap to finish installing in Config.",
+                onOpenConfig,
+            )
+            else -> Unit
         }
+
+        if (settings.bool(Keys.DEFAULT_REMINDER, true) && !isDefault) {
+            NoticePlate(
+                "Action",
+                "Make RIFT your home screen",
+                "Tap here, then pick RIFT under Home app.",
+            ) { safeStart(context, Intent(Settings.ACTION_HOME_SETTINGS)) }
+        }
+
+        var idx = 0
+        while (idx < shown.size) {
+            val id = shown[idx]
+            val next = shown.getOrNull(idx + 1)
+            if (id in half && next != null && next in half) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(Modifier.weight(1f)) { Mod(id) }
+                    Column(Modifier.weight(1f)) { Mod(next) }
+                }
+                idx += 2
+            } else {
+                Mod(id)
+                idx += 1
+            }
+        }
+
 
         if (modules.isEmpty()) {
             NoticePlate(
@@ -797,146 +840,6 @@ private fun QuickApps(settings: SettingsState, apps: List<AppInfo>, onLaunch: (A
 }
 
 // ---------------------------------------------------------------------------
-// Apps page: search on top, A-Z grid below.
-// ---------------------------------------------------------------------------
-
-@Composable
-internal fun riftFieldColors() = OutlinedTextFieldDefaults.colors(
-    focusedBorderColor = MaterialTheme.colorScheme.primary,
-    unfocusedBorderColor = Cyber.border,
-    focusedContainerColor = Cyber.surface,
-    unfocusedContainerColor = Cyber.surface,
-    cursorColor = MaterialTheme.colorScheme.primary,
-    focusedTextColor = Cyber.fg,
-    unfocusedTextColor = Cyber.fg,
-    focusedLabelColor = MaterialTheme.colorScheme.primary,
-    unfocusedLabelColor = Cyber.muted,
-)
-
-@Composable
-fun AppsPage(
-    apps: List<AppInfo>,
-    settings: SettingsState,
-    edge: androidx.compose.ui.input.nestedscroll.NestedScrollConnection,
-    focusSignal: Int,
-    onLaunch: (AppInfo) -> Unit,
-    onOpenConfig: () -> Unit,
-) {
-    var query by remember { mutableStateOf("") }
-    val searchFocus = remember { FocusRequester() }
-    val seenSignal = remember { mutableIntStateOf(focusSignal) }
-    LaunchedEffect(focusSignal) {
-        if (focusSignal != seenSignal.intValue) {
-            seenSignal.intValue = focusSignal
-            try {
-                searchFocus.requestFocus()
-            } catch (_: Exception) {
-                // Field not ready yet.
-            }
-        }
-    }
-    val filtered = remember(apps, query) {
-        val q = query.trim()
-        if (q.isEmpty()) apps else apps.filter { it.label.contains(q, ignoreCase = true) }
-    }
-    val accent = MaterialTheme.colorScheme.primary
-    val folders = settings.folders
-    val entries = remember(filtered, query, folders) {
-        if (query.isBlank()) {
-            val packed = folders.flatMap { it.pkgs }.toSet()
-            folders.map { Entry.FolderEntry(it) as Entry } +
-                filtered.filter { it.packageName !in packed }.map { Entry.AppEntry(it) }
-        } else {
-            filtered.map { Entry.AppEntry(it) }
-        }
-    }
-
-    Column(
-        Modifier
-            .fillMaxSize()
-            .nestedScroll(edge)
-            .padding(horizontal = 16.dp)
-    ) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(top = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                modifier = Modifier.weight(1f).focusRequester(searchFocus),
-                textStyle = TextStyle(fontFamily = PlexMono, fontSize = 14.sp),
-                placeholder = {
-                    Text(
-                        text = "SEARCH_",
-                        color = Cyber.muted,
-                        fontFamily = PlexMono,
-                        fontSize = 14.sp,
-                        letterSpacing = 2.sp,
-                    )
-                },
-                singleLine = true,
-                shape = RectangleShape,
-                colors = riftFieldColors(),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(
-                    onSearch = { filtered.firstOrNull()?.let { onLaunch(it) } }
-                ),
-            )
-            Box(
-                Modifier
-                    .size(56.dp)
-                    .background(Cyber.surface)
-                    .border(1.dp, Cyber.border)
-                    .clickable { onOpenConfig() },
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(text = "⚙", fontSize = 22.sp, color = accent)
-            }
-        }
-
-        Kicker(
-            text = "Apps · ${filtered.size}",
-            color = Cyber.muted,
-            modifier = Modifier.padding(top = 14.dp),
-        )
-
-        if (filtered.isEmpty()) {
-            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Text(
-                    text = if (apps.isEmpty()) "LOADING…" else "NO MATCH FOR \"${query.trim()}\"",
-                    color = Cyber.muted,
-                    fontFamily = PlexMono,
-                    fontSize = 12.sp,
-                    letterSpacing = 2.sp,
-                )
-            }
-        } else {
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(settings.columns),
-                contentPadding = PaddingValues(vertical = 12.dp),
-                modifier = Modifier.weight(1f),
-            ) {
-                items(entries, key = { it.key }) { entry ->
-                    EntryIcon(
-                        entry = entry,
-                        apps = apps,
-                        settings = settings,
-                        onLaunch = onLaunch,
-                        showLabel = settings.showLabels,
-                        iconDp = settings.iconDp,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Icons, dock, tabs
 // ---------------------------------------------------------------------------
 
@@ -950,6 +853,7 @@ fun AppIcon(
     showLabel: Boolean,
     iconDp: Int,
     modifier: Modifier = Modifier,
+    compact: Boolean = false,
 ) {
     val context = LocalContext.current
     var menuOpen by remember { mutableStateOf(false) }
@@ -964,12 +868,12 @@ fun AppIcon(
                     onClick = { onLaunch(app) },
                     onLongClick = { menuOpen = true },
                 )
-                .padding(horizontal = 4.dp, vertical = 8.dp),
+                .padding(horizontal = if (compact) 2.dp else 4.dp, vertical = if (compact) 2.dp else 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Box(
                 Modifier
-                    .size((iconDp + 16).dp)
+                    .size((iconDp + if (compact) 8 else 16).dp)
                     .background(Cyber.surface2)
                     .border(1.dp, Cyber.border),
                 contentAlignment = Alignment.Center,
@@ -1084,14 +988,14 @@ fun AppIcon(
     }
 }
 
-/** Pinned favourites, visible on every page. */
+/** Pinned favourites, visible on every page, as a slim bar. */
 @Composable
 fun Dock(apps: List<AppInfo>, settings: SettingsState, onLaunch: (AppInfo) -> Unit) {
     val dockApps = resolveEntries(settings.dock, apps, settings.folders)
     Box(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .padding(horizontal = 12.dp, vertical = 4.dp)
             .plate()
     ) {
         if (dockApps.isEmpty()) {
@@ -1099,18 +1003,18 @@ fun Dock(apps: List<AppInfo>, settings: SettingsState, onLaunch: (AppInfo) -> Un
                 text = "LONG-PRESS ANY APP TO PIN IT HERE",
                 color = Cyber.muted,
                 fontFamily = PlexMono,
-                fontSize = 11.sp,
+                fontSize = 10.sp,
                 letterSpacing = 1.sp,
                 textAlign = TextAlign.Center,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 28.dp),
+                    .padding(vertical = 14.dp),
             )
         } else {
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 4.dp, horizontal = 4.dp),
+                    .padding(vertical = 2.dp, horizontal = 4.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly,
             ) {
                 dockApps.forEach { entry ->
@@ -1122,6 +1026,7 @@ fun Dock(apps: List<AppInfo>, settings: SettingsState, onLaunch: (AppInfo) -> Un
                         showLabel = false,
                         iconDp = minOf(settings.iconDp, 40),
                         modifier = Modifier.weight(1f),
+                        compact = true,
                     )
                 }
             }
@@ -1129,47 +1034,71 @@ fun Dock(apps: List<AppInfo>, settings: SettingsState, onLaunch: (AppInfo) -> Un
     }
 }
 
-/** Labelled page switcher so it is always obvious where you are. */
+/** Small page dots with a gear, or (in Config > Look) labelled tabs. */
 @Composable
-fun TabBar(current: Int, onSelect: (Int) -> Unit) {
+fun PageBar(current: Int, style: Int, onSelect: (Int) -> Unit, onConfig: () -> Unit) {
     val accent = MaterialTheme.colorScheme.primary
-    Column {
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(1.dp)
-                .background(Cyber.border)
-        )
-        Row(Modifier.fillMaxWidth()) {
-            listOf("Brief", "Apps", "Deck", "Config").forEachIndexed { index, label ->
+    val labels = listOf("Brief", "Home", "Config")
+    if (style == 1) {
+        Column {
+            Box(Modifier.fillMaxWidth().height(1.dp).background(Cyber.border))
+            Row(Modifier.fillMaxWidth()) {
+                labels.forEachIndexed { index, label ->
+                    val selected = index == current
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .height(44.dp)
+                            .clickable { onSelect(index) }
+                            .drawBehind {
+                                if (selected) {
+                                    drawLine(accent, Offset(0f, 0f), Offset(size.width, 0f), strokeWidth = 3.dp.toPx())
+                                }
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = label.uppercase(),
+                            color = if (selected) accent else Cyber.muted,
+                            fontFamily = PlexMono,
+                            fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+                            fontSize = 12.sp,
+                            letterSpacing = 3.sp,
+                        )
+                    }
+                }
+            }
+        }
+        return
+    }
+    Row(Modifier.fillMaxWidth().height(30.dp), verticalAlignment = Alignment.CenterVertically) {
+        Spacer(Modifier.width(48.dp))
+        Row(Modifier.weight(1f), horizontalArrangement = Arrangement.Center) {
+            labels.forEachIndexed { index, _ ->
                 val selected = index == current
                 Box(
                     Modifier
-                        .weight(1f)
-                        .height(52.dp)
-                        .clickable { onSelect(index) }
-                        .drawBehind {
-                            if (selected) {
-                                drawLine(
-                                    accent,
-                                    Offset(0f, 0f),
-                                    Offset(size.width, 0f),
-                                    strokeWidth = 3.dp.toPx(),
-                                )
-                            }
-                        },
+                        .width(32.dp)
+                        .height(30.dp)
+                        .clickable { onSelect(index) },
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(
-                        text = label.uppercase(),
-                        color = if (selected) accent else Cyber.muted,
-                        fontFamily = PlexMono,
-                        fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
-                        fontSize = 13.sp,
-                        letterSpacing = 3.sp,
+                    Box(
+                        Modifier
+                            .size(if (selected) 9.dp else 6.dp)
+                            .background(if (selected) accent else Cyber.muted)
                     )
                 }
             }
+        }
+        Box(
+            Modifier
+                .width(48.dp)
+                .height(30.dp)
+                .clickable { onConfig() },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(text = "⚙", fontSize = 16.sp, color = accent)
         }
     }
 }
@@ -1418,7 +1347,7 @@ fun ConfigPage(
                     )
                 }
                 ChoiceRow(
-                    label = "Quick apps per row",
+                    label = "Home grid icons per row",
                     options = listOf("3", "4", "5", "6"),
                     selected = settings.int(Keys.QUICK_COLUMNS, 4).coerceIn(3, 6) - 3,
                 ) { settings.putInt(Keys.QUICK_COLUMNS, it + 3) }
@@ -1452,6 +1381,10 @@ fun ConfigPage(
             }
             "strip" -> {
             Section("Top strip") {
+            ToggleRow("Show top strip", settings.bool(Keys.STRIP_SHOW, false)) {
+                settings.putBool(Keys.STRIP_SHOW, it)
+            }
+            MonoNote("Off by default: the phone already shows time and battery up top.")
                 ToggleRow("Show time", settings.bool(Keys.STRIP_TIME, true)) {
                     settings.putBool(Keys.STRIP_TIME, it)
                 }
@@ -1490,7 +1423,7 @@ fun ConfigPage(
                     settings.putBool(Keys.LABELS, it)
                 }
                 ToggleRow("Show dock", settings.showDock) { settings.putBool(Keys.DOCK_SHOW, it) }
-                ToggleRow("Show tab bar", settings.showTabBar) { settings.putBool(Keys.TAB_BAR, it) }
+                ToggleRow("Show page dots and gear", settings.showTabBar) { settings.putBool(Keys.TAB_BAR, it) }
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Kicker("Hidden apps · ${hiddenApps.size}", color = Cyber.muted)
                     if (hiddenApps.isEmpty()) {
@@ -1632,6 +1565,9 @@ fun ConfigPage(
                 ToggleRow("Notifications in shade", settings.bool(Keys.SHADE_NOTES, true)) {
                     settings.putBool(Keys.SHADE_NOTES, it)
                 }
+                ToggleRow("Tools in shade (tasks, timer, calculator)", settings.bool(Keys.SHADE_TOOLS, true)) {
+                    settings.putBool(Keys.SHADE_TOOLS, it)
+                }
             }
             }
             "stream" -> {
@@ -1750,7 +1686,12 @@ fun ConfigPage(
                         }
                     }
                 }
-                ToggleRow("Grid background", settings.showGrid) { settings.putBool(Keys.GRID, it) }
+                ChoiceRow(
+                label = "Page indicator",
+                options = listOf("Dots", "Labelled tabs"),
+                selected = settings.int(Keys.TAB_STYLE, 0).coerceIn(0, 1),
+            ) { settings.putInt(Keys.TAB_STYLE, it) }
+            ToggleRow("Grid background", settings.showGrid) { settings.putBool(Keys.GRID, it) }
                 ToggleRow("Scanlines", settings.scanlines) { settings.putBool(Keys.SCANLINES, it) }
                 ToggleRow("Clock glow", settings.glow) { settings.putBool(Keys.GLOW, it) }
             }
@@ -1759,8 +1700,8 @@ fun ConfigPage(
             Section("Behavior") {
                 ChoiceRow(
                     label = "Open on",
-                    options = listOf("Brief", "Apps", "Deck"),
-                    selected = settings.int(Keys.START_PAGE, 0).coerceIn(0, 2),
+                    options = listOf("Brief", "Home"),
+                selected = settings.int(Keys.START_PAGE, 0).coerceIn(0, 1),
                 ) { settings.putInt(Keys.START_PAGE, it) }
                 ToggleRow(
                     "Remind me to set RIFT as home",

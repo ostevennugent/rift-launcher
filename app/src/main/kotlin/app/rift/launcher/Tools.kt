@@ -393,26 +393,18 @@ private fun encodeTasks(tasks: List<TaskItem>): String =
 // Deck page
 // ---------------------------------------------------------------------------
 
+/** Tasks, timer, stopwatch, calculator and notes. Shown inside the shade. */
 @Composable
-fun DeckPage(settings: SettingsState, tools: ToolsState, calc: CalcState) {
+fun DeckContent(settings: SettingsState, tools: ToolsState, calc: CalcState) {
     Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+        Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Plate {
-            Kicker("Quick toggles")
-            Spacer(Modifier.height(10.dp))
-            QuickToggles()
-        }
         TasksPlate(settings)
         TimerPlate(tools)
         StopwatchPlate(tools)
         CalculatorPlate(calc)
         NotesPlate(settings)
-        Spacer(Modifier.height(8.dp))
     }
 }
 

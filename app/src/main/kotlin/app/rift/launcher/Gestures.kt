@@ -9,9 +9,9 @@ import androidx.compose.ui.unit.Velocity
 val GestureActions = listOf(
     "none" to "Nothing",
     "shade" to "Open the shade",
-    "search" to "Search apps",
-    "apps" to "Go to Apps",
-    "deck" to "Go to Deck",
+    "search" to "Search apps (drawer + keyboard)",
+    "apps" to "Open the app drawer",
+    "home" to "Go to Home grid",
     "brief" to "Go to Brief",
     "config" to "Open Config",
 )

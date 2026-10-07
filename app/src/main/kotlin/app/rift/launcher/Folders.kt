@@ -95,10 +95,11 @@ fun EntryIcon(
     showLabel: Boolean,
     iconDp: Int,
     modifier: Modifier = Modifier,
+    compact: Boolean = false,
 ) {
     when (entry) {
-        is Entry.AppEntry -> AppIcon(entry.app, settings, onLaunch, showLabel, iconDp, modifier)
-        is Entry.FolderEntry -> FolderIcon(entry.folder, apps, settings, showLabel, iconDp, modifier)
+        is Entry.AppEntry -> AppIcon(entry.app, settings, onLaunch, showLabel, iconDp, modifier, compact)
+        is Entry.FolderEntry -> FolderIcon(entry.folder, apps, settings, showLabel, iconDp, modifier, compact)
     }
 }
 
@@ -111,6 +112,7 @@ fun FolderIcon(
     showLabel: Boolean,
     iconDp: Int,
     modifier: Modifier = Modifier,
+    compact: Boolean = false,
 ) {
     val actions = LocalFolderActions.current
     val accent = MaterialTheme.colorScheme.primary
@@ -120,12 +122,12 @@ fun FolderIcon(
         Column(
             Modifier
                 .combinedClickable(onClick = { actions.open(folder.id) }, onLongClick = { actions.open(folder.id) })
-                .padding(horizontal = 4.dp, vertical = 8.dp),
+                .padding(horizontal = if (compact) 2.dp else 4.dp, vertical = if (compact) 2.dp else 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Box(
                 Modifier
-                    .size((iconDp + 16).dp)
+                    .size((iconDp + if (compact) 8 else 16).dp)
                     .background(Cyber.surface2)
                     .border(1.dp, accent.copy(alpha = 0.7f)),
                 contentAlignment = Alignment.Center,

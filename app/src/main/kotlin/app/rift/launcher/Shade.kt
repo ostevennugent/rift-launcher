@@ -38,7 +38,14 @@ import androidx.compose.ui.unit.sp
 
 /** Overlay over the home screen: quick toggles, media and notifications. Swipe up or tap outside to close. */
 @Composable
-fun Shade(open: Boolean, info: InfoController, settings: SettingsState, onClose: () -> Unit) {
+fun Shade(
+    open: Boolean,
+    info: InfoController,
+    settings: SettingsState,
+    tools: ToolsState,
+    calc: CalcState,
+    onClose: () -> Unit,
+) {
     val context = LocalContext.current
     BackHandler(enabled = open) { onClose() }
     val threshold = with(LocalDensity.current) { 60.dp.toPx() }
@@ -110,6 +117,10 @@ fun Shade(open: Boolean, info: InfoController, settings: SettingsState, onClose:
                     }
                     items.forEach { NoteRow(it, onDone = onClose) }
                 }
+            }
+            if (settings.bool(Keys.SHADE_TOOLS, true)) {
+                Kicker("Tools", color = Cyber.muted)
+                DeckContent(settings, tools, calc)
             }
             Spacer(Modifier.height(24.dp))
         }
