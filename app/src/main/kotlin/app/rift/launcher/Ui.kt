@@ -606,7 +606,7 @@ fun SettingsSheet(settings: SettingsState, onDismiss: () -> Unit) {
                             Modifier
                                 .clip(RoundedCornerShape(20.dp))
                                 .background(if (selected) accent else GlassFill)
-                                .clickable { settings.setColumns(count) }
+                                .clickable { settings.updateColumns(count) }
                                 .padding(horizontal = 22.dp, vertical = 12.dp),
                         ) {
                             Text(
@@ -623,7 +623,7 @@ fun SettingsSheet(settings: SettingsState, onDismiss: () -> Unit) {
                 Text("Show app names", modifier = Modifier.weight(1f))
                 Switch(
                     checked = settings.showLabels,
-                    onCheckedChange = { settings.setShowLabels(it) },
+                    onCheckedChange = { settings.updateShowLabels(it) },
                 )
             }
 

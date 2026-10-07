@@ -62,12 +62,12 @@ class SettingsState(private val prefs: SharedPreferences) {
         prefs.edit().putInt(KEY_ACCENT, index).apply()
     }
 
-    fun setColumns(count: Int) {
+    fun updateColumns(count: Int) {
         columns = count
         prefs.edit().putInt(KEY_COLUMNS, count).apply()
     }
 
-    fun setShowLabels(show: Boolean) {
+    fun updateShowLabels(show: Boolean) {
         showLabels = show
         prefs.edit().putBoolean(KEY_LABELS, show).apply()
     }
