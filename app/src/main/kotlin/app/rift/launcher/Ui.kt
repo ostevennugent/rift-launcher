@@ -8,7 +8,7 @@ import android.net.Uri
 import android.provider.Settings
 import android.text.format.DateFormat
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -34,10 +34,10 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -46,8 +46,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -60,11 +60,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
@@ -82,10 +85,6 @@ import java.time.format.DateTimeFormatter
 private const val PAGE_BRIEF = 0
 private const val PAGE_APPS = 1
 
-private val GlassFill = Color.White.copy(alpha = 0.10f)
-private val GlassStroke = Color.White.copy(alpha = 0.14f)
-private val MutedText = Color.White.copy(alpha = 0.70f)
-
 private fun safeStart(context: Context, intent: Intent) {
     try {
         context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -95,7 +94,7 @@ private fun safeStart(context: Context, intent: Intent) {
 }
 
 // ---------------------------------------------------------------------------
-// Root: two pages (Brief, Apps), a dock, and a labelled tab bar.
+// Root: status strip, two pages (Brief, Apps), dock, labelled tab bar.
 // ---------------------------------------------------------------------------
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -169,19 +168,20 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int) {
     Box(
         Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(listOf(Color(0x66000000), Color(0xB3000000)))
-            )
+            .background(Cyber.stage)
     ) {
+        GridBackdrop()
         Column(
             Modifier
                 .fillMaxSize()
                 .systemBarsPadding()
                 .imePadding()
         ) {
+            StatusStrip(onClick = { showSettings = true })
             HorizontalPager(state = pagerState, modifier = Modifier.weight(1f)) { page ->
                 if (page == PAGE_BRIEF) {
                     BriefPage(
+                        settings = settings,
                         onOpenApps = { scope.launch { pagerState.animateScrollToPage(PAGE_APPS) } },
                         onOpenSettings = { showSettings = true },
                     )
@@ -200,6 +200,9 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int) {
                 onSelect = { scope.launch { pagerState.animateScrollToPage(it) } },
             )
         }
+        if (settings.scanlines) {
+            Scanlines()
+        }
     }
 
     if (showSettings) {
@@ -208,12 +211,138 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int) {
 }
 
 // ---------------------------------------------------------------------------
-// Brief page: clock, date, a few glanceable cards.
+// Backdrop and overlays
+// ---------------------------------------------------------------------------
+
+/** Faint 40dp grid over the near-black stage. */
+@Composable
+private fun GridBackdrop() {
+    Canvas(Modifier.fillMaxSize()) {
+        val step = 40.dp.toPx()
+        val line = Cyber.border.copy(alpha = 0.55f)
+        var x = 0f
+        while (x < size.width) {
+            drawLine(line, Offset(x, 0f), Offset(x, size.height), strokeWidth = 1f)
+            x += step
+        }
+        var y = 0f
+        while (y < size.height) {
+            drawLine(line, Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
+            y += step
+        }
+    }
+}
+
+/** Very light CRT scanlines drawn over everything. Never intercepts touches. */
+@Composable
+private fun Scanlines() {
+    Canvas(Modifier.fillMaxSize()) {
+        val step = 4.dp.toPx()
+        val line = Cyber.fg.copy(alpha = 0.035f)
+        var y = 0f
+        while (y < size.height) {
+            drawLine(line, Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
+            y += step
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Shared pieces
+// ---------------------------------------------------------------------------
+
+/** Small uppercase monospace label, like the headers on a HUD panel. */
+@Composable
+fun Kicker(
+    text: String,
+    modifier: Modifier = Modifier,
+    color: Color = MaterialTheme.colorScheme.primary,
+) {
+    Text(
+        text = text.uppercase(),
+        modifier = modifier,
+        color = color,
+        fontFamily = PlexMono,
+        fontSize = 11.sp,
+        letterSpacing = 2.sp,
+    )
+}
+
+@Composable
+fun Plate(
+    modifier: Modifier = Modifier,
+    highlight: Boolean = false,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(
+        modifier
+            .fillMaxWidth()
+            .plate(highlight)
+            .padding(14.dp),
+        content = content,
+    )
+}
+
+/** Time on the left, RIFT in the middle, battery on the right. Tap for settings. */
+@Composable
+fun StatusStrip(onClick: () -> Unit) {
+    val context = LocalContext.current
+    var now by remember { mutableStateOf(LocalDateTime.now()) }
+    var battery by remember { mutableStateOf(readBattery(context)) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            now = LocalDateTime.now()
+            battery = readBattery(context)
+            delay(15_000)
+        }
+    }
+    val use24h = DateFormat.is24HourFormat(context)
+    val timeText = now.format(DateTimeFormatter.ofPattern(if (use24h) "HH:mm" else "h:mm a"))
+    val low = battery.first <= 20 && !battery.second
+    val batteryText = (if (battery.second) "+" else "") + "${battery.first}%"
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = timeText,
+            modifier = Modifier.weight(1f),
+            fontFamily = PlexMono,
+            fontSize = 12.sp,
+        )
+        Text(
+            text = "RIFT",
+            modifier = Modifier.weight(1f),
+            color = MaterialTheme.colorScheme.primary,
+            fontFamily = PlexMono,
+            fontSize = 12.sp,
+            letterSpacing = 4.sp,
+            textAlign = TextAlign.Center,
+        )
+        Text(
+            text = batteryText,
+            modifier = Modifier.weight(1f),
+            color = if (low) MaterialTheme.colorScheme.secondary else Cyber.fg,
+            fontFamily = PlexMono,
+            fontSize = 12.sp,
+            textAlign = TextAlign.End,
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Brief page: glowing clock and a few plates.
 // ---------------------------------------------------------------------------
 
 @Composable
-fun BriefPage(onOpenApps: () -> Unit, onOpenSettings: () -> Unit) {
+fun BriefPage(settings: SettingsState, onOpenApps: () -> Unit, onOpenSettings: () -> Unit) {
     val context = LocalContext.current
+    val primary = MaterialTheme.colorScheme.primary
+    val hot = MaterialTheme.colorScheme.secondary
     var now by remember { mutableStateOf(LocalDateTime.now()) }
     var battery by remember { mutableStateOf(readBattery(context)) }
     var alarm by remember { mutableStateOf(readNextAlarm(context)) }
@@ -231,7 +360,7 @@ fun BriefPage(onOpenApps: () -> Unit, onOpenSettings: () -> Unit) {
 
     val use24h = DateFormat.is24HourFormat(context)
     val timeText = now.format(DateTimeFormatter.ofPattern(if (use24h) "HH:mm" else "h:mm"))
-    val dateText = now.format(DateTimeFormatter.ofPattern("EEEE, MMMM d"))
+    val dateText = now.format(DateTimeFormatter.ofPattern("EEEE, MMM d")).uppercase()
     val greeting = when {
         now.hour < 5 -> "Up late"
         now.hour < 12 -> "Good morning"
@@ -242,61 +371,104 @@ fun BriefPage(onOpenApps: () -> Unit, onOpenSettings: () -> Unit) {
     Column(
         Modifier
             .fillMaxSize()
-            .padding(horizontal = 24.dp, vertical = 16.dp),
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Spacer(Modifier.height(24.dp))
-        Text(timeText, fontSize = 88.sp, fontWeight = FontWeight.Light)
-        Text(dateText, fontSize = 18.sp, color = MutedText)
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(12.dp))
+        Text(
+            text = timeText,
+            fontSize = 72.sp,
+            lineHeight = 76.sp,
+            fontWeight = FontWeight.Medium,
+            letterSpacing = (-2).sp,
+            style = TextStyle(
+                shadow = if (settings.glow) {
+                    Shadow(color = primary.copy(alpha = 0.6f), blurRadius = 36f)
+                } else {
+                    null
+                },
+            ),
+        )
+        Text(
+            text = dateText,
+            color = Cyber.muted,
+            fontFamily = PlexMono,
+            fontSize = 12.sp,
+            letterSpacing = 3.sp,
+        )
+        Spacer(Modifier.height(4.dp))
 
         if (!isDefault) {
-            GlassCard(
+            Plate(
                 modifier = Modifier.clickable {
                     safeStart(context, Intent(Settings.ACTION_HOME_SETTINGS))
                 },
-                accentBorder = true,
+                highlight = true,
             ) {
-                Text("Make RIFT your home screen", fontWeight = FontWeight.SemiBold)
+                Kicker("Action", color = hot)
                 Text(
-                    "Tap here, then pick RIFT under Home app.",
-                    fontSize = 14.sp,
-                    color = MutedText,
-                    modifier = Modifier.padding(top = 2.dp),
+                    text = "Make RIFT your home screen",
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+                Text(
+                    text = "Tap here, then pick RIFT under Home app.",
+                    color = Cyber.muted,
+                    fontFamily = PlexMono,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(top = 4.dp),
                 )
             }
         }
 
-        GlassCard {
-            Text(greeting, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
-            val batteryText = "Battery ${battery.first}%" + if (battery.second) " (charging)" else ""
-            Text(batteryText, color = MutedText, modifier = Modifier.padding(top = 4.dp))
+        Plate {
+            Kicker("Status")
             Text(
-                text = alarm?.let { "Next alarm: $it" } ?: "No alarm set",
-                color = MutedText,
+                text = greeting,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 20.sp,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+            val batteryText = "Power ${battery.first}%" + if (battery.second) " (charging)" else ""
+            Text(
+                text = batteryText,
+                color = Cyber.muted,
+                fontFamily = PlexMono,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+            Text(
+                text = alarm?.let { "Next alarm $it" } ?: "No alarm set",
+                color = Cyber.muted,
+                fontFamily = PlexMono,
+                fontSize = 12.sp,
                 modifier = Modifier.padding(top = 2.dp),
             )
         }
 
-        GlassCard(modifier = Modifier.clickable { onOpenApps() }) {
-            Text("All apps", fontWeight = FontWeight.SemiBold)
+        Plate(modifier = Modifier.clickable { onOpenApps() }) {
+            Kicker("Apps")
             Text(
-                "Tap here, or swipe left, to see everything installed.",
-                fontSize = 14.sp,
-                color = MutedText,
-                modifier = Modifier.padding(top = 2.dp),
+                text = "Tap here, or swipe left, to see everything installed.",
+                color = Cyber.muted,
+                fontFamily = PlexMono,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(top = 4.dp),
             )
         }
 
-        GlassCard(modifier = Modifier.clickable { onOpenSettings() }) {
-            Text("Settings", fontWeight = FontWeight.SemiBold)
+        Plate(modifier = Modifier.clickable { onOpenSettings() }) {
+            Kicker("Settings")
             Text(
-                "Accent color, grid size, labels, dock.",
-                fontSize = 14.sp,
-                color = MutedText,
-                modifier = Modifier.padding(top = 2.dp),
+                text = "Accent color, grid size, effects, dock.",
+                color = Cyber.muted,
+                fontFamily = PlexMono,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(top = 4.dp),
             )
         }
+        Spacer(Modifier.height(8.dp))
     }
 }
 
@@ -326,7 +498,7 @@ fun AppsPage(
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(top = 12.dp),
+                .padding(top = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -334,17 +506,26 @@ fun AppsPage(
                 value = query,
                 onValueChange = { query = it },
                 modifier = Modifier.weight(1f),
-                placeholder = { Text("Search apps", color = MutedText) },
+                textStyle = TextStyle(fontFamily = PlexMono, fontSize = 14.sp),
+                placeholder = {
+                    Text(
+                        text = "SEARCH_",
+                        color = Cyber.muted,
+                        fontFamily = PlexMono,
+                        fontSize = 14.sp,
+                        letterSpacing = 2.sp,
+                    )
+                },
                 singleLine = true,
-                shape = RoundedCornerShape(28.dp),
+                shape = RectangleShape,
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = accent,
-                    unfocusedBorderColor = GlassStroke,
-                    focusedContainerColor = GlassFill,
-                    unfocusedContainerColor = GlassFill,
+                    unfocusedBorderColor = Cyber.border,
+                    focusedContainerColor = Cyber.surface,
+                    unfocusedContainerColor = Cyber.surface,
                     cursorColor = accent,
-                    focusedTextColor = Color.White,
-                    unfocusedTextColor = Color.White,
+                    focusedTextColor = Cyber.fg,
+                    unfocusedTextColor = Cyber.fg,
                 ),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(
@@ -353,27 +534,36 @@ fun AppsPage(
             )
             Box(
                 Modifier
-                    .size(52.dp)
-                    .clip(CircleShape)
-                    .background(GlassFill)
+                    .size(56.dp)
+                    .background(Cyber.surface)
+                    .border(1.dp, Cyber.border)
                     .clickable { onOpenSettings() },
                 contentAlignment = Alignment.Center,
             ) {
-                Text("⚙", fontSize = 22.sp)
+                Text(text = "⚙", fontSize = 22.sp, color = accent)
             }
         }
+
+        Kicker(
+            text = "Apps · ${filtered.size}",
+            color = Cyber.muted,
+            modifier = Modifier.padding(top = 14.dp),
+        )
 
         if (filtered.isEmpty()) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 Text(
-                    text = if (apps.isEmpty()) "Loading apps…" else "No apps match \"${query.trim()}\"",
-                    color = MutedText,
+                    text = if (apps.isEmpty()) "LOADING…" else "NO MATCH FOR \"${query.trim()}\"",
+                    color = Cyber.muted,
+                    fontFamily = PlexMono,
+                    fontSize = 12.sp,
+                    letterSpacing = 2.sp,
                 )
             }
         } else {
             LazyVerticalGrid(
                 columns = GridCells.Fixed(settings.columns),
-                contentPadding = PaddingValues(vertical = 16.dp),
+                contentPadding = PaddingValues(vertical = 12.dp),
                 modifier = Modifier.weight(1f),
             ) {
                 items(filtered, key = { it.packageName }) { app ->
@@ -391,10 +581,10 @@ fun AppsPage(
 }
 
 // ---------------------------------------------------------------------------
-// Pieces
+// Icons, dock, tabs
 // ---------------------------------------------------------------------------
 
-/** One app icon. Tap launches it; long-press opens the actions menu. */
+/** One app on a dark tile. Tap launches it; long-press opens the actions menu. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun AppIcon(
@@ -411,31 +601,46 @@ fun AppIcon(
     Box(modifier, contentAlignment = Alignment.Center) {
         Column(
             Modifier
-                .clip(RoundedCornerShape(16.dp))
                 .combinedClickable(
                     onClick = { onLaunch(app) },
                     onLongClick = { menuOpen = true },
                 )
-                .padding(horizontal = 6.dp, vertical = 8.dp),
+                .padding(horizontal = 4.dp, vertical = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Image(
-                bitmap = app.icon,
-                contentDescription = app.label,
-                modifier = Modifier.size(56.dp),
-            )
+            Box(
+                Modifier
+                    .size(60.dp)
+                    .background(Cyber.surface2)
+                    .border(1.dp, Cyber.border),
+                contentAlignment = Alignment.Center,
+            ) {
+                Image(
+                    bitmap = app.icon,
+                    contentDescription = app.label,
+                    modifier = Modifier.size(44.dp),
+                )
+            }
             if (showLabel) {
                 Text(
                     text = app.label,
-                    fontSize = 12.sp,
+                    color = Cyber.muted,
+                    fontFamily = PlexMono,
+                    fontSize = 10.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(top = 4.dp),
+                    modifier = Modifier.padding(top = 6.dp),
                 )
             }
         }
-        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+        DropdownMenu(
+            expanded = menuOpen,
+            onDismissRequest = { menuOpen = false },
+            modifier = Modifier
+                .background(Cyber.surface2)
+                .border(1.dp, Cyber.border),
+        ) {
             DropdownMenuItem(
                 text = { Text(if (pinned) "Remove from dock" else "Pin to dock") },
                 onClick = {
@@ -473,29 +678,29 @@ fun AppIcon(
 /** Pinned favourites, always visible on both pages. */
 @Composable
 fun Dock(dockApps: List<AppInfo>, settings: SettingsState, onLaunch: (AppInfo) -> Unit) {
-    Surface(
-        modifier = Modifier
+    Box(
+        Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        shape = RoundedCornerShape(28.dp),
-        color = Color.White.copy(alpha = 0.12f),
-        border = BorderStroke(1.dp, GlassStroke),
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .plate()
     ) {
         if (dockApps.isEmpty()) {
             Text(
-                text = "Long-press any app to pin it here",
-                fontSize = 13.sp,
-                color = MutedText,
+                text = "LONG-PRESS ANY APP TO PIN IT HERE",
+                color = Cyber.muted,
+                fontFamily = PlexMono,
+                fontSize = 11.sp,
+                letterSpacing = 1.sp,
                 textAlign = TextAlign.Center,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 26.dp),
+                    .padding(vertical = 28.dp),
             )
         } else {
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 8.dp, horizontal = 4.dp),
+                    .padding(vertical = 4.dp, horizontal = 4.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly,
             ) {
                 dockApps.forEach { app ->
@@ -516,45 +721,44 @@ fun Dock(dockApps: List<AppInfo>, settings: SettingsState, onLaunch: (AppInfo) -
 @Composable
 fun TabBar(current: Int, onSelect: (Int) -> Unit) {
     val accent = MaterialTheme.colorScheme.primary
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.Center,
-    ) {
-        listOf("Brief", "Apps").forEachIndexed { index, label ->
-            val selected = index == current
-            Box(
-                Modifier
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(if (selected) accent.copy(alpha = 0.22f) else Color.Transparent)
-                    .clickable { onSelect(index) }
-                    .padding(horizontal = 32.dp, vertical = 14.dp),
-            ) {
-                Text(
-                    text = label,
-                    color = if (selected) accent else MutedText,
-                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                )
+    Column {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(Cyber.border)
+        )
+        Row(Modifier.fillMaxWidth()) {
+            listOf("Brief", "Apps").forEachIndexed { index, label ->
+                val selected = index == current
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .height(52.dp)
+                        .clickable { onSelect(index) }
+                        .drawBehind {
+                            if (selected) {
+                                drawLine(
+                                    accent,
+                                    Offset(0f, 0f),
+                                    Offset(size.width, 0f),
+                                    strokeWidth = 3.dp.toPx(),
+                                )
+                            }
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = label.uppercase(),
+                        color = if (selected) accent else Cyber.muted,
+                        fontFamily = PlexMono,
+                        fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+                        fontSize = 13.sp,
+                        letterSpacing = 3.sp,
+                    )
+                }
             }
         }
-    }
-}
-
-@Composable
-fun GlassCard(
-    modifier: Modifier = Modifier,
-    accentBorder: Boolean = false,
-    content: @Composable ColumnScope.() -> Unit,
-) {
-    val stroke = if (accentBorder) MaterialTheme.colorScheme.primary else GlassStroke
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
-        color = GlassFill,
-        border = BorderStroke(1.dp, stroke),
-    ) {
-        Column(Modifier.padding(18.dp), content = content)
     }
 }
 
@@ -562,76 +766,116 @@ fun GlassCard(
 // Settings
 // ---------------------------------------------------------------------------
 
+@Composable
+private fun SettingToggle(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(text = label, modifier = Modifier.weight(1f))
+        Switch(
+            checked = checked,
+            onCheckedChange = onChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Cyber.stage,
+                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                uncheckedThumbColor = Cyber.muted,
+                uncheckedTrackColor = Cyber.surface2,
+                uncheckedBorderColor = Cyber.border,
+            ),
+        )
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsSheet(settings: SettingsState, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val accent = MaterialTheme.colorScheme.primary
 
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = SheetColor) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = Cyber.bg,
+        shape = RectangleShape,
+    ) {
         Column(
             Modifier
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp)
                 .padding(bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp),
+            verticalArrangement = Arrangement.spacedBy(22.dp),
         ) {
-            Text("Settings", fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+            Kicker("Settings")
 
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Accent color", color = MutedText)
+                Kicker("Neon scheme", color = Cyber.muted)
                 Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Accents.forEachIndexed { index, color ->
+                    Accents.forEachIndexed { index, scheme ->
                         val selected = index == settings.accentIndex
-                        Box(
-                            Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                                .background(color)
-                                .then(
-                                    if (selected) Modifier.border(3.dp, Color.White, CircleShape)
-                                    else Modifier
-                                )
-                                .clickable { settings.setAccent(index) }
-                        )
-                    }
-                }
-            }
-
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Apps per row", color = MutedText)
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    listOf(3, 4, 5).forEach { count ->
-                        val selected = count == settings.columns
-                        Box(
-                            Modifier
-                                .clip(RoundedCornerShape(20.dp))
-                                .background(if (selected) accent else GlassFill)
-                                .clickable { settings.updateColumns(count) }
-                                .padding(horizontal = 22.dp, vertical = 12.dp),
+                        Column(
+                            Modifier.clickable { settings.setAccent(index) },
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
+                            Box(
+                                Modifier
+                                    .size(44.dp)
+                                    .background(scheme.primary)
+                                    .then(
+                                        if (selected) Modifier.border(3.dp, Cyber.fg)
+                                        else Modifier.border(1.dp, Cyber.border)
+                                    )
+                            )
                             Text(
-                                text = "$count",
-                                color = if (selected) Color.Black else Color.White,
-                                fontWeight = FontWeight.SemiBold,
+                                text = scheme.name.uppercase(),
+                                color = if (selected) Cyber.fg else Cyber.muted,
+                                fontFamily = PlexMono,
+                                fontSize = 10.sp,
+                                letterSpacing = 1.sp,
                             )
                         }
                     }
                 }
             }
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Show app names", modifier = Modifier.weight(1f))
-                Switch(
-                    checked = settings.showLabels,
-                    onCheckedChange = { settings.updateShowLabels(it) },
-                )
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Kicker("Apps per row", color = Cyber.muted)
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    listOf(3, 4, 5).forEach { count ->
+                        val selected = count == settings.columns
+                        Box(
+                            Modifier
+                                .background(if (selected) accent else Cyber.surface)
+                                .border(1.dp, if (selected) accent else Cyber.border)
+                                .clickable { settings.updateColumns(count) }
+                                .padding(horizontal = 24.dp, vertical = 12.dp),
+                        ) {
+                            Text(
+                                text = "$count",
+                                color = if (selected) Cyber.stage else Cyber.fg,
+                                fontFamily = PlexMono,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        }
+                    }
+                }
             }
+
+            SettingToggle("Show app names", settings.showLabels) { settings.updateShowLabels(it) }
+            SettingToggle("Scanlines", settings.scanlines) { settings.updateScanlines(it) }
+            SettingToggle("Clock glow", settings.glow) { settings.updateGlow(it) }
 
             Button(
                 onClick = { safeStart(context, Intent(Settings.ACTION_HOME_SETTINGS)) },
                 modifier = Modifier.fillMaxWidth(),
+                shape = RectangleShape,
             ) {
-                Text("Choose default home app")
+                Text(
+                    text = "CHOOSE DEFAULT HOME APP",
+                    fontFamily = PlexMono,
+                    fontSize = 12.sp,
+                    letterSpacing = 2.sp,
+                )
             }
         }
     }

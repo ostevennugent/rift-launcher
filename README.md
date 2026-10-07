@@ -1,6 +1,6 @@
 # RIFT Launcher (Android)
 
-A native Android home-screen launcher in Kotlin + Jetpack Compose. Dark glass look over your wallpaper.
+A native Android home-screen launcher in Kotlin + Jetpack Compose. Cyberpunk look: near-black grid stage, neon plates, Oxanium + IBM Plex Mono type, scanlines and a glowing clock (ported from the original RIFT prototype).
 
 ## What it does
 
@@ -8,7 +8,7 @@ A native Android home-screen launcher in Kotlin + Jetpack Compose. Dark glass lo
 - **Apps page**: every installed app, A-Z, with search. Press the keyboard's search key to launch the top match.
 - **Dock**: up to 5 pinned apps, visible on both pages.
 - **Long-press an app**: pin or unpin it from the dock, open App info, or uninstall it.
-- **Settings**: accent color, apps per row (3, 4 or 5), show or hide names, and a shortcut to pick the default home app.
+- **Settings**: neon scheme (Teal, Signal, Amber, Acid), scanlines and clock glow toggles, apps per row (3, 4 or 5), show or hide names, and a shortcut to pick the default home app.
 - **Navigation**: swipe between pages or use the Brief / Apps tabs. Back steps up one level. Pressing Home returns to Brief.
 
 ## Get the APK

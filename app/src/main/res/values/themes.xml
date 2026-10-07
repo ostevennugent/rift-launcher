@@ -1,9 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Transparent window so the system wallpaper shows through the glass UI. -->
+    <!-- Dark stage color shows instantly at launch, before Compose draws. -->
     <style name="Theme.Rift" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowShowWallpaper">true</item>
-        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowBackground">@color/stage</item>
         <item name="android:colorBackgroundCacheHint">@null</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>

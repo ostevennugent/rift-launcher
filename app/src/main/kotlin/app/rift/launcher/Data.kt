@@ -52,6 +52,10 @@ class SettingsState(private val prefs: SharedPreferences) {
         private set
     var showLabels by mutableStateOf(prefs.getBoolean(KEY_LABELS, true))
         private set
+    var scanlines by mutableStateOf(prefs.getBoolean(KEY_SCANLINES, true))
+        private set
+    var glow by mutableStateOf(prefs.getBoolean(KEY_GLOW, true))
+        private set
     var dock by mutableStateOf(
         (prefs.getString(KEY_DOCK, "") ?: "").split(",").filter { it.isNotBlank() }
     )
@@ -72,6 +76,16 @@ class SettingsState(private val prefs: SharedPreferences) {
         prefs.edit().putBoolean(KEY_LABELS, show).apply()
     }
 
+    fun updateScanlines(on: Boolean) {
+        scanlines = on
+        prefs.edit().putBoolean(KEY_SCANLINES, on).apply()
+    }
+
+    fun updateGlow(on: Boolean) {
+        glow = on
+        prefs.edit().putBoolean(KEY_GLOW, on).apply()
+    }
+
     /** Pin or unpin an app. The dock holds at most [DOCK_MAX] apps. */
     fun toggleDock(packageName: String) {
         val next = if (packageName in dock) {
@@ -89,6 +103,8 @@ class SettingsState(private val prefs: SharedPreferences) {
         private const val KEY_COLUMNS = "columns"
         private const val KEY_LABELS = "labels"
         private const val KEY_DOCK = "dock"
+        private const val KEY_SCANLINES = "scanlines"
+        private const val KEY_GLOW = "glow"
     }
 }
 
