@@ -98,7 +98,7 @@ private fun safeStart(context: Context, intent: Intent) {
 // Root: two pages (Brief, Apps), a dock, and a labelled tab bar.
 // ---------------------------------------------------------------------------
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun LauncherRoot(settings: SettingsState, homeSignal: Int) {
     val context = LocalContext.current
