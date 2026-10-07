@@ -18,6 +18,7 @@ import androidx.compose.runtime.setValue
 data class NoteItem(
     val key: String,
     val app: String,
+    val pkg: String,
     val title: String,
     val text: String,
     val whenMs: Long,
@@ -99,6 +100,7 @@ class RiftNotificationListener : NotificationListenerService() {
                 NoteItem(
                     key = sbn.key,
                     app = appLabel,
+                    pkg = sbn.packageName,
                     title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: "",
                     text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: "",
                     whenMs = sbn.postTime,

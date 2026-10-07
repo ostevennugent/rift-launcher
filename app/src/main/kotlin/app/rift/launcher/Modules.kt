@@ -107,16 +107,41 @@ fun CommsModule(info: InfoController) {
     }
 }
 
+/** Opens the notification's own screen, or at least its app, when it is tapped. */
+private fun openNote(context: android.content.Context, n: NoteItem) {
+    var opened = false
+    val pending = n.intent
+    if (pending != null) {
+        try {
+            val options = if (android.os.Build.VERSION.SDK_INT >= 34) {
+                android.app.ActivityOptions.makeBasic()
+                    .setPendingIntentBackgroundActivityStartMode(
+                        android.app.ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+                    )
+                    .toBundle()
+            } else {
+                null
+            }
+            pending.send(context, 0, null, null, null, null, options)
+            opened = true
+        } catch (_: Exception) {
+            // Cancelled or refused; fall back to opening the app.
+        }
+    }
+    if (!opened) {
+        val launch = context.packageManager.getLaunchIntentForPackage(n.pkg)
+        if (launch != null) safeStart(context, launch)
+    }
+}
+
 @Composable
 fun NoteRow(n: NoteItem, onDone: () -> Unit) {
+    val context = LocalContext.current
     Row(
         Modifier
+            .fillMaxWidth()
             .clickable {
-                try {
-                    n.intent?.send()
-                } catch (_: Exception) {
-                    // Intent was cancelled.
-                }
+                openNote(context, n)
                 onDone()
             }
             .padding(top = 8.dp),
@@ -135,6 +160,22 @@ fun NoteRow(n: NoteItem, onDone: () -> Unit) {
                 contentAlignment = Alignment.Center,
             ) { Text("✕", color = Cyber.muted) }
         }
+    }
+}
+
+/** Compact weather shown to the right of the clock. */
+@Composable
+fun WeatherSide(w: WeatherInfo, modifier: Modifier = Modifier) {
+    Column(modifier, horizontalAlignment = Alignment.End) {
+        Text(
+            text = "${w.temp}°${w.unit}",
+            fontSize = 30.sp,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+            maxLines = 1,
+        )
+        Text(text = w.summary, color = MaterialTheme.colorScheme.primary, fontFamily = PlexMono, fontSize = 12.sp, maxLines = 1)
+        Mono("H ${w.high}° L ${w.low}°")
+        Mono("Wind ${w.wind} ${w.windUnit}")
     }
 }
 

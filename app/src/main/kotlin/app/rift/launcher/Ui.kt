@@ -650,7 +650,13 @@ fun BriefPage(
 
         modules.forEach { id ->
             when (id) {
-                "clock" -> Text(
+                "clock" -> Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                    modifier = Modifier.weight(1f, fill = false),
                     text = timeText,
                     fontSize = clockSize.sp,
                     lineHeight = (clockSize * 1.05f).sp,
@@ -666,6 +672,11 @@ fun BriefPage(
                         },
                     ),
                 )
+                    val side = info.weather
+                    if (side != null && "weather" in modules) {
+                        WeatherSide(side, Modifier.padding(start = 8.dp))
+                    }
+                }
                 "date" -> Text(
                     text = dateText,
                     color = Cyber.muted,
@@ -703,7 +714,7 @@ fun BriefPage(
                         )
                     }
                 }
-                "weather" -> WeatherModule(info, onOpenConfig)
+                "weather" -> if (info.weather == null || "clock" !in modules) WeatherModule(info, onOpenConfig)
                 "agenda" -> AgendaModule(info, onRequestCalendar)
                 "comms" -> CommsModule(info)
                 "media" -> MediaModule(info)
