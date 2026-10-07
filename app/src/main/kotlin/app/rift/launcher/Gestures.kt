@@ -1,6 +1,9 @@
 package app.rift.launcher
 
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.unit.Velocity
@@ -19,7 +22,7 @@ val GestureActions = listOf(
 /** The gestures the user can remap: stored key, label, default action. */
 val GestureSlots = listOf(
     Triple(Keys.G_DOWN, "Swipe down", "shade"),
-    Triple(Keys.G_UP, "Swipe up", "search"),
+    Triple(Keys.G_UP, "Swipe up", "apps"),
     Triple(Keys.G_LONG, "Long-press empty space", "config"),
     Triple(Keys.G_DOUBLE, "Double-tap empty space", "none"),
 )
@@ -65,3 +68,24 @@ class EdgeSwipe(
         return Velocity.Zero
     }
 }
+
+/** Closes something when it is dragged far enough in one direction, wherever the drag starts on it. */
+fun Modifier.swipeDismiss(up: Boolean, thresholdPx: Float, onClose: () -> Unit): Modifier =
+    pointerInput(up, thresholdPx) {
+        var total = 0f
+        var fired = false
+        detectVerticalDragGestures(
+            onDragStart = {
+                total = 0f
+                fired = false
+            },
+            onDragEnd = {},
+            onDragCancel = {},
+        ) { _, dy ->
+            total += dy
+            if (!fired && ((up && total < -thresholdPx) || (!up && total > thresholdPx))) {
+                fired = true
+                onClose()
+            }
+        }
+    }

@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
@@ -177,10 +179,25 @@ private fun DrawerContent(
             .imePadding()
             .padding(horizontal = 12.dp),
     ) {
+        // Grab bar and title: drag down anywhere on this strip to close the drawer.
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .padding(top = 6.dp)
+                .swipeDismiss(up = false, thresholdPx = threshold * 0.6f, onClose = { closeNow() }),
+        ) {
+            Box(
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 4.dp)
+                    .width(44.dp)
+                    .height(4.dp)
+                    .background(Cyber.muted)
+            )
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(top = 6.dp),
+                .padding(top = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Kicker("Apps · ${filtered.size}", modifier = Modifier.weight(1f), color = Cyber.muted)
@@ -193,6 +210,7 @@ private fun DrawerContent(
                     .clickable { onClose() }
                     .padding(8.dp),
             )
+        }
         }
         if (entries.isEmpty()) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
