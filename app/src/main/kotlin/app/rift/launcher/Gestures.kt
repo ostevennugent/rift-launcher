@@ -1,6 +1,10 @@
 package app.rift.launcher
 
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
@@ -89,3 +93,46 @@ fun Modifier.swipeDismiss(up: Boolean, thresholdPx: Float, onClose: () -> Unit):
             }
         }
     }
+
+/**
+ * Swipes that start in the top or bottom strip of the screen always count, even over a page that
+ * scrolls. Down from the top strip runs [onTopDown]; up from the bottom strip runs [onBottomUp].
+ * It only watches the touches; the page underneath still scrolls normally.
+ */
+fun Modifier.edgeZones(
+    topZonePx: Float,
+    bottomZonePx: Float,
+    thresholdPx: Float,
+    onTopDown: () -> Unit,
+    onBottomUp: () -> Unit,
+): Modifier = pointerInput(topZonePx, bottomZonePx, thresholdPx) {
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+        val zone = when {
+            down.position.y <= topZonePx -> 1
+            down.position.y >= size.height - bottomZonePx -> 2
+            else -> 0
+        }
+        if (zone == 0) return@awaitEachGesture
+        var dx = 0f
+        var dy = 0f
+        var fired = false
+        while (true) {
+            val event = awaitPointerEvent(PointerEventPass.Initial)
+            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+            if (!change.pressed) break
+            val delta = change.positionChange()
+            dx += delta.x
+            dy += delta.y
+            if (!fired && Math.abs(dy) > thresholdPx && Math.abs(dy) > 2f * Math.abs(dx)) {
+                if (zone == 1 && dy > 0f) {
+                    fired = true
+                    onTopDown()
+                } else if (zone == 2 && dy < 0f) {
+                    fired = true
+                    onBottomUp()
+                }
+            }
+        }
+    }
+}

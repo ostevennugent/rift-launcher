@@ -21,6 +21,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -306,11 +309,21 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int, re
     val hidden = settings.hiddenApps
     val visibleApps = remember(apps, hidden) { apps.filter { it.packageName !in hidden } }
 
+    val density = LocalDensity.current
+    val topZone = with(density) { WindowInsets.statusBars.getTop(this).toFloat() + 56.dp.toPx() }
+    val bottomZone = with(density) { WindowInsets.navigationBars.getBottom(this).toFloat() + 120.dp.toPx() }
     CompositionLocalProvider(LocalFolderActions provides folderActions) {
     Box(
         Modifier
             .fillMaxSize()
             .background(Cyber.stage)
+            .edgeZones(
+                topZonePx = topZone,
+                bottomZonePx = bottomZone,
+                thresholdPx = thresholdPx,
+                onTopDown = { if (!shadeOpen && !drawerOpen && gDown != "none") currentRun(gDown) },
+                onBottomUp = { if (!shadeOpen && !drawerOpen && gUp != "none") currentRun(gUp) },
+            )
     ) {
         if (settings.showGrid) {
             GridBackdrop()
@@ -1538,7 +1551,7 @@ fun ConfigPage(
             }
             "gestures" -> {
             Section("Gestures") {
-                MonoNote("Swipes work on the Brief page once it is scrolled to its end.")
+                MonoNote("Swipe down from the very top or up from the dock area at any time. Elsewhere on a page they work once it is scrolled to its end.")
                 GestureSlots.forEach { slot ->
                     PickerRow(
                         label = slot.second,
