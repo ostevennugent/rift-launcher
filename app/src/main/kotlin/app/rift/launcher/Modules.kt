@@ -225,7 +225,7 @@ fun VitalsModule() {
     Plate {
         Kicker("Device vitals")
         Mono(
-            "Storage ${vit.storageUsedPct}% used (%.1f GB free)".format(vit.storageFreeGb),
+            "Storage ${vit.storageUsedPct}% used (" + "%.1f".format(vit.storageFreeGb) + " GB free)",
             Modifier.padding(top = 4.dp), Cyber.fg,
         )
         Mono("Memory ${vit.memUsedPct}% used · Network ${vit.network}", Modifier.padding(top = 2.dp), Cyber.fg)
