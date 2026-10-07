@@ -81,6 +81,7 @@ object Keys {
     const val GEO_LABEL = "geo_label"
     const val TASKS = "tasks"
     const val NOTES = "notes"
+    const val STREAM = "stream"
     const val G_DOWN = "g_down"
     const val G_UP = "g_up"
     const val G_LONG = "g_long"

@@ -310,6 +310,9 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int, re
         if (settings.showGrid) {
             GridBackdrop()
         }
+        if (settings.bool(Keys.STREAM, true)) {
+            DataStream()
+        }
         Column(
             Modifier
                 .fillMaxSize()
@@ -1500,6 +1503,9 @@ fun ConfigPage(
                         }
                     }
                 }
+            }
+            ToggleRow("Edge data stream", settings.bool(Keys.STREAM, true)) {
+                settings.putBool(Keys.STREAM, it)
             }
             ToggleRow("Grid background", settings.showGrid) { settings.putBool(Keys.GRID, it) }
             ToggleRow("Scanlines", settings.scanlines) { settings.putBool(Keys.SCANLINES, it) }
