@@ -16,6 +16,14 @@ class MainActivity : ComponentActivity() {
     // Bumped when the "Config" app shortcut is used.
     private val configSignal = mutableIntStateOf(0)
 
+    // Bumped whenever the launcher comes back to the front, to refresh information.
+    private val resumeSignal = mutableIntStateOf(0)
+
+    override fun onResume() {
+        super.onResume()
+        resumeSignal.intValue++
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Always light status/navigation icons: the stage is always dark.
@@ -32,6 +40,7 @@ class MainActivity : ComponentActivity() {
                     settings = settings,
                     homeSignal = homeSignal.intValue,
                     configSignal = configSignal.intValue,
+                    resumeSignal = resumeSignal.intValue,
                 )
             }
         }

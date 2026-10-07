@@ -72,12 +72,31 @@ object Keys {
     const val HIDDEN_APPS = "hidden_apps"
     const val AUTO_UPDATE = "auto_update"
     const val LAST_CHECK = "last_check"
+    const val WEATHER_CITY = "weather_city"
+    const val WEATHER_UNIT = "weather_unit"
+    const val FEED_URL = "feed_url"
+    const val GEO_QUERY = "geo_query"
+    const val GEO_LAT = "geo_lat"
+    const val GEO_LON = "geo_lon"
+    const val GEO_LABEL = "geo_label"
+    const val TASKS = "tasks"
+    const val NOTES = "notes"
+    const val G_DOWN = "g_down"
+    const val G_UP = "g_up"
+    const val G_LONG = "g_long"
+    const val G_DOUBLE = "g_double"
 }
 
 /** The blocks that can appear on the Brief page: id to display name. */
 val BriefModules = listOf(
     "clock" to "Clock",
     "date" to "Date",
+    "weather" to "Weather",
+    "agenda" to "Calendar agenda",
+    "comms" to "Notifications",
+    "media" to "Now playing",
+    "headlines" to "Headlines",
+    "vitals" to "Device vitals",
     "status" to "Status plate",
     "quick" to "Quick apps",
 )

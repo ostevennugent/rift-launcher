@@ -1,13 +1,17 @@
 package app.rift.launcher
 
+import android.Manifest
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.hardware.camera2.CameraManager
 import android.net.Uri
 import android.provider.Settings
 import android.text.format.DateFormat
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
@@ -15,6 +19,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -56,10 +61,16 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
@@ -83,7 +94,8 @@ import java.time.format.DateTimeFormatter
 
 private const val PAGE_BRIEF = 0
 private const val PAGE_APPS = 1
-private const val PAGE_CONFIG = 2
+private const val PAGE_DECK = 2
+private const val PAGE_CONFIG = 3
 
 private const val SIX_HOURS_MS = 6 * 60 * 60 * 1000L
 
@@ -101,18 +113,28 @@ fun safeStart(context: Context, intent: Intent) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int) {
+fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int, resumeSignal: Int) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
     val pagerState = rememberPagerState(
-        initialPage = settings.int(Keys.START_PAGE, 0).coerceIn(0, 1),
-        pageCount = { 3 },
+        initialPage = settings.int(Keys.START_PAGE, 0).coerceIn(0, 2),
+        pageCount = { 4 },
     )
     val updates = remember { UpdateController(context.applicationContext, settings, scope) }
+    val info = remember { InfoController(context.applicationContext, settings, scope) }
+    val tools = remember { ToolsState() }
+    val calc = remember { CalcState() }
+    var shadeOpen by remember { mutableStateOf(false) }
+    var searchSignal by remember { mutableIntStateOf(0) }
 
     var apps by remember { mutableStateOf<List<AppInfo>>(emptyList()) }
     val reload = remember { mutableIntStateOf(0) }
+
+    val calendarLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { info.refreshAgenda() }
+    val requestCalendar: () -> Unit = { calendarLauncher.launch(Manifest.permission.READ_CALENDAR) }
 
     // Load installed apps off the main thread, and again whenever one changes.
     LaunchedEffect(reload.intValue) {
@@ -136,6 +158,40 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int) {
         onDispose { context.unregisterReceiver(receiver) }
     }
 
+    // Keep the flashlight tile in sync with the real torch.
+    DisposableEffect(context) {
+        val manager = context.getSystemService(CameraManager::class.java)
+        val callback = object : CameraManager.TorchCallback() {
+            override fun onTorchModeChanged(cameraId: String, enabled: Boolean) {
+                Torch.on = enabled
+            }
+        }
+        try {
+            manager?.registerTorchCallback(callback, null)
+        } catch (_: Exception) {
+            // No camera service.
+        }
+        onDispose {
+            try {
+                manager?.unregisterTorchCallback(callback)
+            } catch (_: Exception) {
+                // Already gone.
+            }
+        }
+    }
+
+    // Timer and stopwatch keep running while you are on any page.
+    LaunchedEffect(Unit) {
+        while (true) {
+            if (tools.timerRunning || tools.swRunning) {
+                if (tools.tick()) vibrate(context)
+                delay(100)
+            } else {
+                delay(500)
+            }
+        }
+    }
+
     // On start: clear any old downloaded update, then check GitHub at most every 6 hours.
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) { Updater.cleanup(context) }
@@ -145,10 +201,34 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int) {
         }
     }
 
+    // Refresh information whenever the launcher comes to the front, and every 30 minutes.
+    LaunchedEffect(resumeSignal) {
+        info.refreshAll()
+    }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(30 * 60_000L)
+            info.refreshWeather()
+            info.refreshHeadlines()
+            info.refreshAgenda()
+        }
+    }
+    val cityKey = settings.str(Keys.WEATHER_CITY, "") + settings.int(Keys.WEATHER_UNIT, 0)
+    LaunchedEffect(cityKey) {
+        delay(1_200)
+        info.refreshWeather()
+    }
+    val feedKey = settings.str(Keys.FEED_URL, "")
+    LaunchedEffect(feedKey) {
+        delay(1_200)
+        info.refreshHeadlines()
+    }
+
     // Pressing Home while already on the launcher returns to the Brief page.
     LaunchedEffect(homeSignal) {
         if (homeSignal > 0) {
             focusManager.clearFocus()
+            shadeOpen = false
             pagerState.animateScrollToPage(PAGE_BRIEF)
         }
     }
@@ -164,7 +244,7 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int) {
     }
 
     // Back steps "up" to Brief from the other pages.
-    BackHandler {
+    BackHandler(enabled = !shadeOpen) {
         if (pagerState.currentPage != PAGE_BRIEF) {
             scope.launch { pagerState.animateScrollToPage(PAGE_BRIEF) }
         }
@@ -181,6 +261,41 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int) {
     }
     val openConfig: () -> Unit = {
         scope.launch { pagerState.animateScrollToPage(PAGE_CONFIG) }
+    }
+    val runAction: (String) -> Unit = { action ->
+        when (action) {
+            "shade" -> shadeOpen = true
+            "search" -> scope.launch {
+                pagerState.animateScrollToPage(PAGE_APPS)
+                searchSignal++
+            }
+            "apps" -> scope.launch { pagerState.animateScrollToPage(PAGE_APPS) }
+            "deck" -> scope.launch { pagerState.animateScrollToPage(PAGE_DECK) }
+            "brief" -> scope.launch { pagerState.animateScrollToPage(PAGE_BRIEF) }
+            "config" -> openConfig()
+            else -> Unit
+        }
+    }
+    fun gesture(slot: Triple<String, String, String>): String = settings.str(slot.first, slot.third)
+    val gDown = gesture(GestureSlots[0])
+    val gUp = gesture(GestureSlots[1])
+    val gLong = gesture(GestureSlots[2])
+    val gDouble = gesture(GestureSlots[3])
+    val thresholdPx = with(LocalDensity.current) { 70.dp.toPx() }
+    val currentRun by rememberUpdatedState(runAction)
+    val edge = remember(thresholdPx, gDown, gUp) {
+        EdgeSwipe(
+            thresholdPx,
+            onDown = if (gDown == "none") null else ({ currentRun(gDown) }),
+            onUp = if (gUp == "none") null else ({ currentRun(gUp) }),
+        )
+    }
+    val edgeDownOnly = remember(thresholdPx, gDown) {
+        EdgeSwipe(
+            thresholdPx,
+            onDown = if (gDown == "none") null else ({ currentRun(gDown) }),
+            onUp = null,
+        )
     }
 
     val hidden = settings.hiddenApps
@@ -208,16 +323,30 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int) {
                         settings = settings,
                         apps = apps,
                         updates = updates,
+                        info = info,
+                        edge = edge,
+                        onLongPress = { currentRun(gLong) },
+                        onDoubleTap = { currentRun(gDouble) },
+                        onRequestCalendar = requestCalendar,
                         onLaunch = launchApp,
                         onOpenConfig = openConfig,
                     )
                     PAGE_APPS -> AppsPage(
                         apps = visibleApps,
                         settings = settings,
+                        edge = edgeDownOnly,
+                        focusSignal = searchSignal,
                         onLaunch = launchApp,
                         onOpenConfig = openConfig,
                     )
-                    else -> ConfigPage(settings = settings, apps = apps, updates = updates)
+                    PAGE_DECK -> DeckPage(settings = settings, tools = tools, calc = calc)
+                    else -> ConfigPage(
+                        settings = settings,
+                        apps = apps,
+                        updates = updates,
+                        info = info,
+                        onRequestCalendar = requestCalendar,
+                    )
                 }
             }
             if (settings.showDock) {
@@ -230,6 +359,7 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int) {
                 )
             }
         }
+        Shade(open = shadeOpen, info = info, onClose = { shadeOpen = false })
         if (settings.scanlines) {
             Scanlines()
         }
@@ -311,7 +441,7 @@ fun Plate(
 
 /** A tappable highlighted plate used for notices (updates, set-as-home). */
 @Composable
-private fun NoticePlate(kicker: String, title: String, body: String, onClick: () -> Unit) {
+internal fun NoticePlate(kicker: String, title: String, body: String, onClick: () -> Unit) {
     Plate(modifier = Modifier.clickable { onClick() }, highlight = true) {
         Kicker(kicker, color = MaterialTheme.colorScheme.secondary)
         Text(
@@ -422,6 +552,11 @@ fun BriefPage(
     settings: SettingsState,
     apps: List<AppInfo>,
     updates: UpdateController,
+    info: InfoController,
+    edge: androidx.compose.ui.input.nestedscroll.NestedScrollConnection,
+    onLongPress: () -> Unit,
+    onDoubleTap: () -> Unit,
+    onRequestCalendar: () -> Unit,
     onLaunch: (AppInfo) -> Unit,
     onOpenConfig: () -> Unit,
 ) {
@@ -470,6 +605,10 @@ fun BriefPage(
     Column(
         Modifier
             .fillMaxSize()
+            .pointerInput(Unit) {
+                detectTapGestures(onLongPress = { onLongPress() }, onDoubleTap = { onDoubleTap() })
+            }
+            .nestedScroll(edge)
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -561,6 +700,12 @@ fun BriefPage(
                         )
                     }
                 }
+                "weather" -> WeatherModule(info, onOpenConfig)
+                "agenda" -> AgendaModule(info, onRequestCalendar)
+                "comms" -> CommsModule(info)
+                "media" -> MediaModule(info)
+                "headlines" -> HeadlinesModule(info)
+                "vitals" -> VitalsModule()
                 "quick" -> QuickApps(settings = settings, apps = apps, onLaunch = onLaunch)
                 else -> Unit
             }
@@ -624,7 +769,7 @@ private fun QuickApps(settings: SettingsState, apps: List<AppInfo>, onLaunch: (A
 // ---------------------------------------------------------------------------
 
 @Composable
-private fun riftFieldColors() = OutlinedTextFieldDefaults.colors(
+internal fun riftFieldColors() = OutlinedTextFieldDefaults.colors(
     focusedBorderColor = MaterialTheme.colorScheme.primary,
     unfocusedBorderColor = Cyber.border,
     focusedContainerColor = Cyber.surface,
@@ -640,10 +785,24 @@ private fun riftFieldColors() = OutlinedTextFieldDefaults.colors(
 fun AppsPage(
     apps: List<AppInfo>,
     settings: SettingsState,
+    edge: androidx.compose.ui.input.nestedscroll.NestedScrollConnection,
+    focusSignal: Int,
     onLaunch: (AppInfo) -> Unit,
     onOpenConfig: () -> Unit,
 ) {
     var query by remember { mutableStateOf("") }
+    val searchFocus = remember { FocusRequester() }
+    val seenSignal = remember { mutableIntStateOf(focusSignal) }
+    LaunchedEffect(focusSignal) {
+        if (focusSignal != seenSignal.intValue) {
+            seenSignal.intValue = focusSignal
+            try {
+                searchFocus.requestFocus()
+            } catch (_: Exception) {
+                // Field not ready yet.
+            }
+        }
+    }
     val filtered = remember(apps, query) {
         val q = query.trim()
         if (q.isEmpty()) apps else apps.filter { it.label.contains(q, ignoreCase = true) }
@@ -653,6 +812,7 @@ fun AppsPage(
     Column(
         Modifier
             .fillMaxSize()
+            .nestedScroll(edge)
             .padding(horizontal = 16.dp)
     ) {
         Row(
@@ -665,7 +825,7 @@ fun AppsPage(
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).focusRequester(searchFocus),
                 textStyle = TextStyle(fontFamily = PlexMono, fontSize = 14.sp),
                 placeholder = {
                     Text(
@@ -899,7 +1059,7 @@ fun TabBar(current: Int, onSelect: (Int) -> Unit) {
                 .background(Cyber.border)
         )
         Row(Modifier.fillMaxWidth()) {
-            listOf("Brief", "Apps", "Config").forEachIndexed { index, label ->
+            listOf("Brief", "Apps", "Deck", "Config").forEachIndexed { index, label ->
                 val selected = index == current
                 Box(
                     Modifier
@@ -937,7 +1097,7 @@ fun TabBar(current: Int, onSelect: (Int) -> Unit) {
 // ---------------------------------------------------------------------------
 
 @Composable
-private fun riftSwitchColors() = SwitchDefaults.colors(
+internal fun riftSwitchColors() = SwitchDefaults.colors(
     checkedThumbColor = Cyber.stage,
     checkedTrackColor = MaterialTheme.colorScheme.primary,
     uncheckedThumbColor = Cyber.muted,
@@ -946,7 +1106,7 @@ private fun riftSwitchColors() = SwitchDefaults.colors(
 )
 
 @Composable
-private fun Section(title: String, content: @Composable ColumnScope.() -> Unit) {
+internal fun Section(title: String, content: @Composable ColumnScope.() -> Unit) {
     Plate {
         Kicker(title)
         Column(
@@ -958,7 +1118,7 @@ private fun Section(title: String, content: @Composable ColumnScope.() -> Unit) 
 }
 
 @Composable
-private fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+internal fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(
         Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -969,7 +1129,7 @@ private fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
 }
 
 @Composable
-private fun Chip(text: String, selected: Boolean, onClick: () -> Unit) {
+internal fun Chip(text: String, selected: Boolean, onClick: () -> Unit) {
     val accent = MaterialTheme.colorScheme.primary
     Box(
         Modifier
@@ -989,7 +1149,7 @@ private fun Chip(text: String, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun ChoiceRow(
+internal fun ChoiceRow(
     label: String,
     options: List<String>,
     selected: Int,
@@ -1006,7 +1166,50 @@ private fun ChoiceRow(
 }
 
 @Composable
-private fun RiftButton(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+internal fun PickerRow(
+    label: String,
+    options: List<Pair<String, String>>,
+    selectedId: String,
+    onSelect: (String) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(text = label, modifier = Modifier.weight(1f))
+        Box {
+            Box(
+                Modifier
+                    .background(Cyber.surface)
+                    .border(1.dp, Cyber.border)
+                    .clickable { open = true }
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
+            ) {
+                Text(
+                    text = (options.firstOrNull { it.first == selectedId }?.second ?: selectedId) + "  ▾",
+                    fontFamily = PlexMono,
+                    fontSize = 12.sp,
+                )
+            }
+            DropdownMenu(
+                expanded = open,
+                onDismissRequest = { open = false },
+                modifier = Modifier.background(Cyber.surface2).border(1.dp, Cyber.border),
+            ) {
+                options.forEach { (id, text) ->
+                    DropdownMenuItem(
+                        text = { Text(text) },
+                        onClick = {
+                            open = false
+                            onSelect(id)
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun RiftButton(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Button(onClick = onClick, modifier = modifier, shape = RectangleShape) {
         Text(
             text = text.uppercase(),
@@ -1053,18 +1256,25 @@ private fun ModuleRow(
 }
 
 @Composable
-private fun MonoNote(text: String) {
+internal fun MonoNote(text: String) {
     Text(text = text, color = Cyber.muted, fontFamily = PlexMono, fontSize = 12.sp)
 }
 
 @Composable
-fun ConfigPage(settings: SettingsState, apps: List<AppInfo>, updates: UpdateController) {
+fun ConfigPage(
+    settings: SettingsState,
+    apps: List<AppInfo>,
+    updates: UpdateController,
+    info: InfoController,
+    onRequestCalendar: () -> Unit,
+) {
     val context = LocalContext.current
     val accent = MaterialTheme.colorScheme.primary
     var confirmReset by remember { mutableStateOf(false) }
     val order = settings.moduleOrder
     val hiddenModules = settings.hiddenModules
     val hiddenApps = apps.filter { it.packageName in settings.hiddenApps }
+    LaunchedEffect(Unit) { info.refreshAccess() }
 
     Column(
         Modifier
@@ -1099,6 +1309,74 @@ fun ConfigPage(settings: SettingsState, apps: List<AppInfo>, updates: UpdateCont
                 options = listOf("3", "4", "5", "6"),
                 selected = settings.int(Keys.QUICK_COLUMNS, 4).coerceIn(3, 6) - 3,
             ) { settings.putInt(Keys.QUICK_COLUMNS, it + 3) }
+        }
+
+        Section("Information") {
+            OutlinedTextField(
+                value = settings.str(Keys.WEATHER_CITY, ""),
+                onValueChange = { settings.putStr(Keys.WEATHER_CITY, it.take(60)) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Weather city") },
+                placeholder = { Text("e.g. Chicago") },
+                textStyle = TextStyle(fontFamily = PlexMono, fontSize = 14.sp),
+                singleLine = true,
+                shape = RectangleShape,
+                colors = riftFieldColors(),
+            )
+            info.weather?.let { MonoNote("Showing ${it.place}") }
+            info.weatherError?.let { MonoNote("Weather: $it") }
+            ChoiceRow(
+                label = "Temperature",
+                options = listOf("Auto", "°F", "°C"),
+                selected = settings.int(Keys.WEATHER_UNIT, 0).coerceIn(0, 2),
+            ) { settings.putInt(Keys.WEATHER_UNIT, it) }
+            OutlinedTextField(
+                value = settings.str(Keys.FEED_URL, ""),
+                onValueChange = { settings.putStr(Keys.FEED_URL, it.trim()) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Headlines feed (RSS or Atom URL)") },
+                placeholder = { Text(DEFAULT_FEED) },
+                textStyle = TextStyle(fontFamily = PlexMono, fontSize = 12.sp),
+                singleLine = true,
+                shape = RectangleShape,
+                colors = riftFieldColors(),
+            )
+            MonoNote("Leave the feed empty to use BBC News. Tap the headlines on Brief to expand them.")
+        }
+
+        Section("Gestures") {
+            MonoNote("Swipes work on the Brief page once it is scrolled to its end.")
+            GestureSlots.forEach { slot ->
+                PickerRow(
+                    label = slot.second,
+                    options = GestureActions,
+                    selectedId = settings.str(slot.first, slot.third),
+                ) { settings.putStr(slot.first, it) }
+            }
+        }
+
+        Section("Access") {
+            MonoNote("RIFT only reads these on your phone. Nothing is uploaded.")
+            ToggleStatus("Calendar", info.calendarGranted, "Allow", onRequestCalendar)
+            ToggleStatus("Notifications", info.notificationAccess, "Open settings") {
+                safeStart(context, Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+            }
+            ToggleStatus("Do not disturb control", info.dndAccess, "Open settings") {
+                safeStart(context, Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
+            }
+            MonoNote(
+                "If the notification switch is greyed out, open App info, tap the three dots " +
+                    "and choose Allow restricted settings, then try again."
+            )
+            RiftButton("Open RIFT app info", Modifier.fillMaxWidth()) {
+                safeStart(
+                    context,
+                    Intent(
+                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.parse("package:${context.packageName}"),
+                    ),
+                )
+            }
         }
 
         Section("Clock and status") {
@@ -1231,8 +1509,8 @@ fun ConfigPage(settings: SettingsState, apps: List<AppInfo>, updates: UpdateCont
         Section("Behavior") {
             ChoiceRow(
                 label = "Open on",
-                options = listOf("Brief", "Apps"),
-                selected = settings.int(Keys.START_PAGE, 0).coerceIn(0, 1),
+                options = listOf("Brief", "Apps", "Deck"),
+                selected = settings.int(Keys.START_PAGE, 0).coerceIn(0, 2),
             ) { settings.putInt(Keys.START_PAGE, it) }
             ToggleRow(
                 "Remind me to set RIFT as home",
@@ -1290,5 +1568,22 @@ fun ConfigPage(settings: SettingsState, apps: List<AppInfo>, updates: UpdateCont
             }
         }
         Spacer(Modifier.height(8.dp))
+    }
+}
+
+@Composable
+private fun ToggleStatus(label: String, granted: Boolean, action: String, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(text = label)
+            Text(
+                text = if (granted) "ON" else "OFF",
+                color = if (granted) MaterialTheme.colorScheme.primary else Cyber.muted,
+                fontFamily = PlexMono,
+                fontSize = 11.sp,
+                letterSpacing = 1.sp,
+            )
+        }
+        if (!granted) RiftButton(action, onClick = onClick)
     }
 }
