@@ -731,6 +731,7 @@ fun BriefPage(
                 "media" -> MediaModule(info)
                 "headlines" -> HeadlinesModule(info)
                 "vitals" -> VitalsModule()
+                "widgets" -> WidgetsModule()
                 "quick" -> QuickApps(settings = settings, apps = apps, onLaunch = onLaunch)
                 else -> Unit
             }

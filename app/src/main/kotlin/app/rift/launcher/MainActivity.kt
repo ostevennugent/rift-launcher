@@ -26,6 +26,25 @@ class MainActivity : ComponentActivity() {
         resumeSignal.intValue++
     }
 
+    private var widgets: WidgetHostController? = null
+
+    override fun onStart() {
+        super.onStart()
+        widgets?.start()
+    }
+
+    override fun onStop() {
+        widgets?.stop()
+        super.onStop()
+    }
+
+    @Deprecated("Widget setup results arrive here.")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        @Suppress("DEPRECATION")
+        super.onActivityResult(requestCode, resultCode, data)
+        widgets?.onResult(requestCode, resultCode, data)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         CrashLog.install(this)
@@ -38,6 +57,9 @@ class MainActivity : ComponentActivity() {
         val settings = SettingsState(getSharedPreferences("rift", MODE_PRIVATE))
         // A fresh start never counts as a Home press, so the chosen start page is respected.
         if (intent?.action == ACTION_OPEN_CONFIG) configSignal.intValue++
+        val widgetController = WidgetHostController(this, settings)
+        widgets = widgetController
+        widgetController.start()
         setContent {
             var report by androidx.compose.runtime.remember {
                 androidx.compose.runtime.mutableStateOf(crash)
@@ -49,12 +71,14 @@ class MainActivity : ComponentActivity() {
                         CrashLog.clear(this@MainActivity)
                         report = null
                     }
-                } else LauncherRoot(
-                    settings = settings,
-                    homeSignal = homeSignal.intValue,
-                    configSignal = configSignal.intValue,
-                    resumeSignal = resumeSignal.intValue,
-                )
+                } else androidx.compose.runtime.CompositionLocalProvider(LocalWidgets provides widgetController) {
+                    LauncherRoot(
+                        settings = settings,
+                        homeSignal = homeSignal.intValue,
+                        configSignal = configSignal.intValue,
+                        resumeSignal = resumeSignal.intValue,
+                    )
+                }
             }
         }
     }

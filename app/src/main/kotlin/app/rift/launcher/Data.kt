@@ -91,6 +91,7 @@ object Keys {
     const val SHADE_MEDIA = "shade_media"
     const val SHADE_NOTES = "shade_notes"
     const val FOLDERS = "folders"
+    const val WIDGETS = "widgets"
     const val G_DOWN = "g_down"
     const val G_UP = "g_up"
     const val G_LONG = "g_long"
@@ -107,6 +108,7 @@ val BriefModules = listOf(
     "media" to "Now playing",
     "headlines" to "Headlines",
     "vitals" to "Device vitals",
+    "widgets" to "Widgets",
     "status" to "Status plate",
     "quick" to "Quick apps",
 )
