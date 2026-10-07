@@ -38,7 +38,7 @@ import androidx.compose.ui.unit.sp
 
 /** Overlay over the home screen: quick toggles, media and notifications. Swipe up or tap outside to close. */
 @Composable
-fun Shade(open: Boolean, info: InfoController, onClose: () -> Unit) {
+fun Shade(open: Boolean, info: InfoController, settings: SettingsState, onClose: () -> Unit) {
     val context = LocalContext.current
     BackHandler(enabled = open) { onClose() }
     val threshold = with(LocalDensity.current) { 60.dp.toPx() }
@@ -52,7 +52,7 @@ fun Shade(open: Boolean, info: InfoController, onClose: () -> Unit) {
         Column(
             Modifier
                 .fillMaxSize()
-                .background(Color(0xF005070A))
+                .background(Color(0xFF05070A).copy(alpha = floatArrayOf(0.7f, 0.9f, 1f)[settings.int(Keys.SHADE_ALPHA, 1).coerceIn(0, 2)]))
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -74,13 +74,17 @@ fun Shade(open: Boolean, info: InfoController, onClose: () -> Unit) {
                         .padding(8.dp),
                 )
             }
-            Plate {
-                Kicker("Quick toggles")
-                Spacer(Modifier.height(10.dp))
-                QuickToggles()
+            if (settings.bool(Keys.SHADE_TOGGLES, true)) {
+                Plate {
+                    Kicker("Quick toggles")
+                    Spacer(Modifier.height(10.dp))
+                    QuickToggles()
+                }
             }
-            MediaModule(info)
-            if (!info.notificationAccess) {
+            if (settings.bool(Keys.SHADE_MEDIA, true)) MediaModule(info)
+            if (!settings.bool(Keys.SHADE_NOTES, true)) {
+                // Notifications hidden in the shade by choice.
+            } else if (!info.notificationAccess) {
                 NoticePlate(
                     "Notifications",
                     "Show notifications here",

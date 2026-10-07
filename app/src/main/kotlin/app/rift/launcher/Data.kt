@@ -82,6 +82,15 @@ object Keys {
     const val TASKS = "tasks"
     const val NOTES = "notes"
     const val STREAM = "stream"
+    const val STREAM_TRAIL = "stream_trail"
+    const val STREAM_SPEED = "stream_speed"
+    const val STREAM_DENSITY = "stream_density"
+    const val STREAM_EDGE = "stream_edge"
+    const val SHADE_ALPHA = "shade_alpha"
+    const val SHADE_TOGGLES = "shade_toggles"
+    const val SHADE_MEDIA = "shade_media"
+    const val SHADE_NOTES = "shade_notes"
+    const val FOLDERS = "folders"
     const val G_DOWN = "g_down"
     const val G_UP = "g_up"
     const val G_LONG = "g_long"
@@ -175,6 +184,51 @@ class SettingsState(private val prefs: SharedPreferences) {
             val saved = list(Keys.ORDER).filter { it in known }
             return saved + known.filter { it !in saved }
         }
+
+    // --- Folders -----------------------------------------------------------
+
+    val folders: List<Folder> get() = parseFolders(str(Keys.FOLDERS, ""))
+
+    private fun saveFolders(list: List<Folder>) = putStr(Keys.FOLDERS, encodeFolders(list))
+
+    fun folderOf(pkg: String): Folder? = folders.firstOrNull { pkg in it.pkgs }
+
+    fun folderById(id: String): Folder? = folders.firstOrNull { it.id == id }
+
+    /** Makes a folder, optionally with a first app in it, and returns its id. */
+    fun createFolder(name: String, firstPkg: String?): String {
+        val id = System.currentTimeMillis().toString(36)
+        val cleaned = cleanFolderName(name)
+        val without = folders.map { f -> if (firstPkg != null) f.copy(pkgs = f.pkgs - firstPkg) else f }
+        saveFolders(without + Folder(id, cleaned, listOfNotNull(firstPkg)))
+        return id
+    }
+
+    /** An app lives in at most one folder, so adding it here takes it out of any other. */
+    fun moveToFolder(pkg: String, folderId: String) {
+        saveFolders(
+            folders.map { f ->
+                when {
+                    f.id == folderId -> f.copy(pkgs = (f.pkgs - pkg) + pkg)
+                    else -> f.copy(pkgs = f.pkgs - pkg)
+                }
+            }
+        )
+    }
+
+    fun removeFromFolder(pkg: String) {
+        saveFolders(folders.map { it.copy(pkgs = it.pkgs - pkg) })
+    }
+
+    fun renameFolder(id: String, name: String) {
+        saveFolders(folders.map { if (it.id == id) it.copy(name = cleanFolderName(name, allowEmpty = true)) else it })
+    }
+
+    fun deleteFolder(id: String) {
+        saveFolders(folders.filter { it.id != id })
+        putList(Keys.DOCK, dock - "folder:$id")
+        putList(Keys.QUICK, quick - "folder:$id")
+    }
 
     // --- Changes -----------------------------------------------------------
 

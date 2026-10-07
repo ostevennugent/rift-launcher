@@ -54,6 +54,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -127,6 +128,9 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int, re
     val calc = remember { CalcState() }
     var shadeOpen by remember { mutableStateOf(false) }
     var searchSignal by remember { mutableIntStateOf(0) }
+    var openFolder by remember { mutableStateOf<String?>(null) }
+    var addTarget by remember { mutableStateOf<AppInfo?>(null) }
+    val folderActions = remember { FolderActions({ openFolder = it }, { addTarget = it }) }
 
     var apps by remember { mutableStateOf<List<AppInfo>>(emptyList()) }
     val reload = remember { mutableIntStateOf(0) }
@@ -300,8 +304,8 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int, re
 
     val hidden = settings.hiddenApps
     val visibleApps = remember(apps, hidden) { apps.filter { it.packageName !in hidden } }
-    val dockApps = settings.dock.mapNotNull { pkg -> apps.firstOrNull { it.packageName == pkg } }
 
+    CompositionLocalProvider(LocalFolderActions provides folderActions) {
     Box(
         Modifier
             .fillMaxSize()
@@ -311,7 +315,7 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int, re
             GridBackdrop()
         }
         if (settings.bool(Keys.STREAM, true)) {
-            DataStream()
+            DataStream(settings)
         }
         Column(
             Modifier
@@ -353,7 +357,7 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int, re
                 }
             }
             if (settings.showDock) {
-                Dock(dockApps = dockApps, settings = settings, onLaunch = launchApp)
+                Dock(apps = apps, settings = settings, onLaunch = launchApp)
             }
             if (settings.showTabBar) {
                 TabBar(
@@ -362,10 +366,17 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int, re
                 )
             }
         }
-        Shade(open = shadeOpen, info = info, onClose = { shadeOpen = false })
+        Shade(open = shadeOpen, info = info, settings = settings, onClose = { shadeOpen = false })
         if (settings.scanlines) {
             Scanlines()
         }
+    }
+    openFolder?.let { id ->
+        FolderDialog(id, apps, settings, launchApp) { openFolder = null }
+    }
+    addTarget?.let { app ->
+        AddToFolderDialog(app, settings) { addTarget = null }
+    }
     }
 }
 
@@ -741,7 +752,7 @@ fun BriefPage(
 @Composable
 private fun QuickApps(settings: SettingsState, apps: List<AppInfo>, onLaunch: (AppInfo) -> Unit) {
     val columns = settings.int(Keys.QUICK_COLUMNS, 4).coerceIn(3, 6)
-    val quickApps = settings.quick.mapNotNull { pkg -> apps.firstOrNull { it.packageName == pkg } }
+    val quickApps = resolveEntries(settings.quick, apps, settings.folders)
     if (quickApps.isEmpty()) {
         Plate {
             Kicker("Quick apps")
@@ -759,9 +770,10 @@ private fun QuickApps(settings: SettingsState, apps: List<AppInfo>, onLaunch: (A
             Spacer(Modifier.height(4.dp))
             quickApps.chunked(columns).forEach { rowApps ->
                 Row(Modifier.fillMaxWidth()) {
-                    rowApps.forEach { app ->
-                        AppIcon(
-                            app = app,
+                    rowApps.forEach { entry ->
+                        EntryIcon(
+                            entry = entry,
+                            apps = apps,
                             settings = settings,
                             onLaunch = onLaunch,
                             showLabel = settings.showLabels,
@@ -822,6 +834,16 @@ fun AppsPage(
         if (q.isEmpty()) apps else apps.filter { it.label.contains(q, ignoreCase = true) }
     }
     val accent = MaterialTheme.colorScheme.primary
+    val folders = settings.folders
+    val entries = remember(filtered, query, folders) {
+        if (query.isBlank()) {
+            val packed = folders.flatMap { it.pkgs }.toSet()
+            folders.map { Entry.FolderEntry(it) as Entry } +
+                filtered.filter { it.packageName !in packed }.map { Entry.AppEntry(it) }
+        } else {
+            filtered.map { Entry.AppEntry(it) }
+        }
+    }
 
     Column(
         Modifier
@@ -892,9 +914,10 @@ fun AppsPage(
                 contentPadding = PaddingValues(vertical = 12.dp),
                 modifier = Modifier.weight(1f),
             ) {
-                items(filtered, key = { it.packageName }) { app ->
-                    AppIcon(
-                        app = app,
+                items(entries, key = { it.key }) { entry ->
+                    EntryIcon(
+                        entry = entry,
+                        apps = apps,
                         settings = settings,
                         onLaunch = onLaunch,
                         showLabel = settings.showLabels,
@@ -926,6 +949,7 @@ fun AppIcon(
     var menuOpen by remember { mutableStateOf(false) }
     val onDock = app.packageName in settings.dock
     val onHome = app.packageName in settings.quick
+    val folderActions = LocalFolderActions.current
 
     Box(modifier, contentAlignment = Alignment.Center) {
         Column(
@@ -985,6 +1009,22 @@ fun AppIcon(
                 },
             )
             DropdownMenuItem(
+                text = { Text("Add to folder…") },
+                onClick = {
+                    menuOpen = false
+                    folderActions.addTo(app)
+                },
+            )
+            if (settings.folderOf(app.packageName) != null) {
+                DropdownMenuItem(
+                    text = { Text("Remove from folder") },
+                    onClick = {
+                        menuOpen = false
+                        settings.removeFromFolder(app.packageName)
+                    },
+                )
+            }
+            DropdownMenuItem(
                 text = { Text("Hide app") },
                 onClick = {
                     menuOpen = false
@@ -1020,7 +1060,8 @@ fun AppIcon(
 
 /** Pinned favourites, visible on every page. */
 @Composable
-fun Dock(dockApps: List<AppInfo>, settings: SettingsState, onLaunch: (AppInfo) -> Unit) {
+fun Dock(apps: List<AppInfo>, settings: SettingsState, onLaunch: (AppInfo) -> Unit) {
+    val dockApps = resolveEntries(settings.dock, apps, settings.folders)
     Box(
         Modifier
             .fillMaxWidth()
@@ -1046,9 +1087,10 @@ fun Dock(dockApps: List<AppInfo>, settings: SettingsState, onLaunch: (AppInfo) -
                     .padding(vertical = 4.dp, horizontal = 4.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly,
             ) {
-                dockApps.forEach { app ->
-                    AppIcon(
-                        app = app,
+                dockApps.forEach { entry ->
+                    EntryIcon(
+                        entry = entry,
+                        apps = apps,
                         settings = settings,
                         onLaunch = onLaunch,
                         showLabel = false,
@@ -1393,6 +1435,66 @@ fun ConfigPage(
             }
         }
 
+        Section("Overlays") {
+            MonoNote("The shade slides over the home screen. Choose how it looks and what it shows.")
+            ChoiceRow(
+                label = "Shade background",
+                options = listOf("Light", "Medium", "Solid"),
+                selected = settings.int(Keys.SHADE_ALPHA, 1).coerceIn(0, 2),
+            ) { settings.putInt(Keys.SHADE_ALPHA, it) }
+            ToggleRow("Quick toggles in shade", settings.bool(Keys.SHADE_TOGGLES, true)) {
+                settings.putBool(Keys.SHADE_TOGGLES, it)
+            }
+            ToggleRow("Now playing in shade", settings.bool(Keys.SHADE_MEDIA, true)) {
+                settings.putBool(Keys.SHADE_MEDIA, it)
+            }
+            ToggleRow("Notifications in shade", settings.bool(Keys.SHADE_NOTES, true)) {
+                settings.putBool(Keys.SHADE_NOTES, it)
+            }
+            Kicker("Edge data stream", color = Cyber.muted)
+            ToggleRow("Show data stream", settings.bool(Keys.STREAM, true)) {
+                settings.putBool(Keys.STREAM, it)
+            }
+            ChoiceRow(
+                label = "Speed",
+                options = listOf("Slow", "Normal", "Fast"),
+                selected = settings.int(Keys.STREAM_SPEED, 1).coerceIn(0, 2),
+            ) { settings.putInt(Keys.STREAM_SPEED, it) }
+            ChoiceRow(
+                label = "Trail length",
+                options = listOf("Short", "Long", "Max"),
+                selected = settings.int(Keys.STREAM_TRAIL, 1).coerceIn(0, 2),
+            ) { settings.putInt(Keys.STREAM_TRAIL, it) }
+            ChoiceRow(
+                label = "Density",
+                options = listOf("Low", "Medium", "High"),
+                selected = settings.int(Keys.STREAM_DENSITY, 1).coerceIn(0, 2),
+            ) { settings.putInt(Keys.STREAM_DENSITY, it) }
+            ChoiceRow(
+                label = "Edges",
+                options = listOf("Both", "Left", "Right"),
+                selected = settings.int(Keys.STREAM_EDGE, 0).coerceIn(0, 2),
+            ) { settings.putInt(Keys.STREAM_EDGE, it) }
+            MonoNote("A floating overlay that sits over other apps is planned for a later update.")
+        }
+
+        Section("Folders") {
+            val all = settings.folders
+            if (all.isEmpty()) {
+                MonoNote("None yet. Long-press any app and choose Add to folder.")
+            }
+            all.forEach { f ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(f.name.ifBlank { "Folder" })
+                        MonoNote("${f.pkgs.size} apps")
+                    }
+                    RiftButton("Delete") { settings.deleteFolder(f.id) }
+                }
+            }
+            MonoNote("Folders can sit in the Apps grid, the dock and the Quick apps block. Open one and use Pin.")
+        }
+
         Section("Clock and status") {
             ChoiceRow(
                 label = "Clock format",
@@ -1514,9 +1616,6 @@ fun ConfigPage(
                         }
                     }
                 }
-            }
-            ToggleRow("Edge data stream", settings.bool(Keys.STREAM, true)) {
-                settings.putBool(Keys.STREAM, it)
             }
             ToggleRow("Grid background", settings.showGrid) { settings.putBool(Keys.GRID, it) }
             ToggleRow("Scanlines", settings.scanlines) { settings.putBool(Keys.SCANLINES, it) }

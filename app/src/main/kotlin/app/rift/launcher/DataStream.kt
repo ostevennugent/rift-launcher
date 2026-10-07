@@ -28,35 +28,45 @@ private const val GLYPHS = "0123456789ABCDEF<>/\\|=+*ｱｲｳｴｵｶｷｸｹ
  */
 @OptIn(ExperimentalTextApi::class)
 @Composable
-fun DataStream(modifier: Modifier = Modifier) {
+fun DataStream(settings: SettingsState, modifier: Modifier = Modifier) {
     val measurer = rememberTextMeasurer()
     val style = TextStyle(fontFamily = PlexMono, fontSize = 10.sp, color = Cyber.fg)
     val layouts = remember(measurer) {
         GLYPHS.map { measurer.measure(AnnotatedString(it.toString()), style) }
     }
     var tick by remember { mutableIntStateOf(0) }
-    LaunchedEffect(Unit) {
+    val frameMs = longArrayOf(130L, 90L, 55L)[settings.int(Keys.STREAM_SPEED, 1).coerceIn(0, 2)]
+    LaunchedEffect(frameMs) {
         while (true) {
-            delay(90)
+            delay(frameMs)
             tick++
         }
     }
     val accent = MaterialTheme.colorScheme.primary
+    val trail = intArrayOf(16, 32, 52)[settings.int(Keys.STREAM_TRAIL, 1).coerceIn(0, 2)]
+    val streams = intArrayOf(4, 8, 12)[settings.int(Keys.STREAM_DENSITY, 1).coerceIn(0, 2)]
+    val edge = settings.int(Keys.STREAM_EDGE, 0).coerceIn(0, 2)
 
     Canvas(modifier.fillMaxSize()) {
         val t = tick
-        val rowH = 13.dp.toPx()
+        val rowH = 12.dp.toPx()
         val rows = (size.height / rowH).toInt()
         if (rows <= 0) return@Canvas
-        val trail = 12
         val glyphW = layouts.first().size.width.toFloat()
-        val speeds = floatArrayOf(0.45f, 0.8f, 1.15f)
-        val offsets = intArrayOf(3, 19, 41)
-        for (side in 0..1) {
-            val x = if (side == 0) 1.dp.toPx() else size.width - glyphW - 1.dp.toPx()
-            for (s in speeds.indices) {
+        val speeds = floatArrayOf(0.4f, 0.7f, 1.0f, 1.4f, 0.55f, 0.9f, 1.2f, 0.8f)
+        val sides = when (edge) {
+            1 -> intArrayOf(0)
+            2 -> intArrayOf(1)
+            else -> intArrayOf(0, 1)
+        }
+        for (side in sides) {
+            for (s in 0 until streams) {
+                val col = s % 2
+                val inner = if (side == 0) 1.dp.toPx() + col * (glyphW + 1.dp.toPx())
+                else size.width - glyphW - 1.dp.toPx() - col * (glyphW + 1.dp.toPx())
                 val span = rows + trail
-                val head = ((t * speeds[s] + offsets[s] * (side + 1)) % span).toInt()
+                val offset = Math.floorMod(s * 37 + side * 53 + 11, span)
+                val head = ((t * speeds[s % speeds.size] + offset) % span).toInt()
                 for (k in 0 until trail) {
                     val row = head - k
                     if (row < 0 || row >= rows) continue
@@ -67,8 +77,8 @@ fun DataStream(modifier: Modifier = Modifier) {
                     drawText(
                         textLayoutResult = glyph,
                         color = if (isHead) Cyber.fg else accent,
-                        topLeft = Offset(x, row * rowH),
-                        alpha = if (isHead) 0.85f else fade * fade * 0.5f,
+                        topLeft = Offset(inner, row * rowH),
+                        alpha = if (isHead) 1f else (0.15f + 0.65f * fade * fade),
                     )
                 }
             }
