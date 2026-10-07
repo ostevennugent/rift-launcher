@@ -3,6 +3,10 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// Passed in by CI (-PgitSha=... -PbuildNumber=...). Local builds fall back to "dev" / 1.
+val gitSha: String = (project.findProperty("gitSha") as String?) ?: "dev"
+val buildNumber: Int = (project.findProperty("buildNumber") as String?)?.toIntOrNull() ?: 1
+
 android {
     namespace = "app.rift.launcher"
     compileSdk = 34
@@ -11,13 +15,28 @@ android {
         applicationId = "app.rift.launcher"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = buildNumber
+        versionName = "0.2.$buildNumber"
+        buildConfigField("String", "GIT_SHA", "\"$gitSha\"")
+    }
+
+    // One fixed key, so every build can be installed over the previous one.
+    signingConfigs {
+        create("rift") {
+            storeFile = file("rift.keystore")
+            storePassword = "riftlauncher"
+            keyAlias = "rift"
+            keyPassword = "riftlauncher"
+        }
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("rift")
+        }
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("rift")
         }
     }
 
@@ -32,6 +51,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     composeOptions {

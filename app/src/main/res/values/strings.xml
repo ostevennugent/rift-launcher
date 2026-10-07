@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">RIFT</string>
+    <string name="shortcut_config">Config</string>
+    <string name="shortcut_config_long">RIFT launcher config</string>
 </resources>

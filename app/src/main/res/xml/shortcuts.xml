@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="config"
+        android:enabled="true"
+        android:shortcutShortLabel="@string/shortcut_config"
+        android:shortcutLongLabel="@string/shortcut_config_long">
+        <intent
+            android:action="app.rift.launcher.OPEN_CONFIG"
+            android:targetPackage="app.rift.launcher"
+            android:targetClass="app.rift.launcher.MainActivity" />
+    </shortcut>
+</shortcuts>

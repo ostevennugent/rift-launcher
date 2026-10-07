@@ -8,10 +8,7 @@ import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.os.BatteryManager
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.core.graphics.drawable.toBitmap
@@ -44,67 +41,162 @@ fun loadApps(pm: PackageManager, selfPackage: String): List<AppInfo> {
         .sortedBy { it.label.lowercase() }
 }
 
-/** Settings that survive restarts. Backed by SharedPreferences. */
+/** Names of the stored settings. */
+object Keys {
+    const val ACCENT = "accent"
+    const val COLUMNS = "columns"
+    const val LABELS = "labels"
+    const val SCANLINES = "scanlines"
+    const val GLOW = "glow"
+    const val GRID = "grid"
+    const val DOCK = "dock"
+    const val DOCK_SHOW = "dock_show"
+    const val TAB_BAR = "tab_bar"
+    const val STRIP_TIME = "strip_time"
+    const val STRIP_TITLE = "strip_title"
+    const val STRIP_BATTERY = "strip_battery"
+    const val TITLE_TEXT = "title_text"
+    const val CLOCK_MODE = "clock_mode"
+    const val CLOCK_SECONDS = "clock_seconds"
+    const val CLOCK_SIZE = "clock_size"
+    const val ST_GREETING = "st_greeting"
+    const val ST_BATTERY = "st_battery"
+    const val ST_ALARM = "st_alarm"
+    const val DEFAULT_REMINDER = "default_reminder"
+    const val ICON_SIZE = "icon_size"
+    const val START_PAGE = "start_page"
+    const val ORDER = "module_order"
+    const val HIDDEN_MODULES = "module_hidden"
+    const val QUICK = "quick"
+    const val QUICK_COLUMNS = "quick_columns"
+    const val HIDDEN_APPS = "hidden_apps"
+    const val AUTO_UPDATE = "auto_update"
+    const val LAST_CHECK = "last_check"
+}
+
+/** The blocks that can appear on the Brief page: id to display name. */
+val BriefModules = listOf(
+    "clock" to "Clock",
+    "date" to "Date",
+    "status" to "Status plate",
+    "quick" to "Quick apps",
+)
+
+/**
+ * Every launcher setting, stored in SharedPreferences and observable by Compose.
+ * Reads return the default until a value has been saved.
+ */
 class SettingsState(private val prefs: SharedPreferences) {
-    var accentIndex by mutableIntStateOf(prefs.getInt(KEY_ACCENT, 0))
-        private set
-    var columns by mutableIntStateOf(prefs.getInt(KEY_COLUMNS, 4))
-        private set
-    var showLabels by mutableStateOf(prefs.getBoolean(KEY_LABELS, true))
-        private set
-    var scanlines by mutableStateOf(prefs.getBoolean(KEY_SCANLINES, true))
-        private set
-    var glow by mutableStateOf(prefs.getBoolean(KEY_GLOW, true))
-        private set
-    var dock by mutableStateOf(
-        (prefs.getString(KEY_DOCK, "") ?: "").split(",").filter { it.isNotBlank() }
-    )
-        private set
-
-    fun setAccent(index: Int) {
-        accentIndex = index
-        prefs.edit().putInt(KEY_ACCENT, index).apply()
-    }
-
-    fun updateColumns(count: Int) {
-        columns = count
-        prefs.edit().putInt(KEY_COLUMNS, count).apply()
-    }
-
-    fun updateShowLabels(show: Boolean) {
-        showLabels = show
-        prefs.edit().putBoolean(KEY_LABELS, show).apply()
-    }
-
-    fun updateScanlines(on: Boolean) {
-        scanlines = on
-        prefs.edit().putBoolean(KEY_SCANLINES, on).apply()
-    }
-
-    fun updateGlow(on: Boolean) {
-        glow = on
-        prefs.edit().putBoolean(KEY_GLOW, on).apply()
-    }
-
-    /** Pin or unpin an app. The dock holds at most [DOCK_MAX] apps. */
-    fun toggleDock(packageName: String) {
-        val next = if (packageName in dock) {
-            dock - packageName
-        } else {
-            (dock + packageName).takeLast(DOCK_MAX)
+    private val values = mutableStateMapOf<String, Any>().also { map ->
+        prefs.all.forEach { (key, value) ->
+            if (value != null) map[key] = value
         }
-        dock = next
-        prefs.edit().putString(KEY_DOCK, next.joinToString(",")).apply()
+    }
+
+    fun bool(key: String, default: Boolean): Boolean = values[key] as? Boolean ?: default
+    fun int(key: String, default: Int): Int = values[key] as? Int ?: default
+    fun long(key: String, default: Long): Long = values[key] as? Long ?: default
+    fun str(key: String, default: String): String = values[key] as? String ?: default
+
+    fun list(key: String): List<String> =
+        (values[key] as? String)?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
+
+    fun putBool(key: String, value: Boolean) {
+        values[key] = value
+        prefs.edit().putBoolean(key, value).apply()
+    }
+
+    fun putInt(key: String, value: Int) {
+        values[key] = value
+        prefs.edit().putInt(key, value).apply()
+    }
+
+    fun putLong(key: String, value: Long) {
+        values[key] = value
+        prefs.edit().putLong(key, value).apply()
+    }
+
+    fun putStr(key: String, value: String) {
+        values[key] = value
+        prefs.edit().putString(key, value).apply()
+    }
+
+    fun putList(key: String, value: List<String>) = putStr(key, value.joinToString(","))
+
+    /** Forget everything and go back to the defaults. */
+    fun reset() {
+        values.clear()
+        prefs.edit().clear().apply()
+    }
+
+    // --- Convenience reads -------------------------------------------------
+
+    val accentIndex: Int get() = int(Keys.ACCENT, 0).coerceIn(Accents.indices)
+    val columns: Int get() = int(Keys.COLUMNS, 4).coerceIn(3, 6)
+    val showLabels: Boolean get() = bool(Keys.LABELS, true)
+    val scanlines: Boolean get() = bool(Keys.SCANLINES, true)
+    val glow: Boolean get() = bool(Keys.GLOW, true)
+    val showGrid: Boolean get() = bool(Keys.GRID, true)
+    val showDock: Boolean get() = bool(Keys.DOCK_SHOW, true)
+    val showTabBar: Boolean get() = bool(Keys.TAB_BAR, true)
+    val dock: List<String> get() = list(Keys.DOCK)
+    val quick: List<String> get() = list(Keys.QUICK)
+    val hiddenApps: List<String> get() = list(Keys.HIDDEN_APPS)
+    val hiddenModules: List<String> get() = list(Keys.HIDDEN_MODULES)
+    val autoUpdate: Boolean get() = bool(Keys.AUTO_UPDATE, true)
+
+    /** Icon size in dp: small, medium or large. */
+    val iconDp: Int get() = listOf(40, 48, 56)[int(Keys.ICON_SIZE, 1).coerceIn(0, 2)]
+
+    /** Brief-page modules in the user's order, including any added in later versions. */
+    val moduleOrder: List<String>
+        get() {
+            val known = BriefModules.map { it.first }
+            val saved = list(Keys.ORDER).filter { it in known }
+            return saved + known.filter { it !in saved }
+        }
+
+    // --- Changes -----------------------------------------------------------
+
+    fun toggleDock(packageName: String) {
+        val current = dock
+        putList(
+            Keys.DOCK,
+            if (packageName in current) current - packageName
+            else (current + packageName).takeLast(DOCK_MAX),
+        )
+    }
+
+    fun toggleQuick(packageName: String) {
+        val current = quick
+        putList(Keys.QUICK, if (packageName in current) current - packageName else current + packageName)
+    }
+
+    fun toggleHiddenApp(packageName: String) {
+        val current = hiddenApps
+        putList(
+            Keys.HIDDEN_APPS,
+            if (packageName in current) current - packageName else current + packageName,
+        )
+    }
+
+    fun toggleModuleHidden(id: String) {
+        val current = hiddenModules
+        putList(Keys.HIDDEN_MODULES, if (id in current) current - id else current + id)
+    }
+
+    fun moveModule(id: String, delta: Int) {
+        val order = moduleOrder.toMutableList()
+        val from = order.indexOf(id)
+        val to = from + delta
+        if (from < 0 || to !in order.indices) return
+        order.removeAt(from)
+        order.add(to, id)
+        putList(Keys.ORDER, order)
     }
 
     companion object {
         const val DOCK_MAX = 5
-        private const val KEY_ACCENT = "accent"
-        private const val KEY_COLUMNS = "columns"
-        private const val KEY_LABELS = "labels"
-        private const val KEY_DOCK = "dock"
-        private const val KEY_SCANLINES = "scanlines"
-        private const val KEY_GLOW = "glow"
     }
 }
 

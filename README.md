@@ -4,12 +4,24 @@ A native Android home-screen launcher in Kotlin + Jetpack Compose. Cyberpunk loo
 
 ## What it does
 
-- **Brief page**: clock, date, battery, next alarm, and shortcuts.
+- **Brief page**: modules you choose and order (clock, date, status plate, quick apps).
 - **Apps page**: every installed app, A-Z, with search. Press the keyboard's search key to launch the top match.
-- **Dock**: up to 5 pinned apps, visible on both pages.
-- **Long-press an app**: pin or unpin it from the dock, open App info, or uninstall it.
-- **Settings**: neon scheme (Teal, Signal, Amber, Acid), scanlines and clock glow toggles, apps per row (3, 4 or 5), show or hide names, and a shortcut to pick the default home app.
-- **Navigation**: swipe between pages or use the Brief / Apps tabs. Back steps up one level. Pressing Home returns to Brief.
+- **Config page** (third tab, or the gear in the top strip): everything below is configurable.
+  - Show, hide and reorder Brief modules; clock format, size and seconds; which status lines show.
+  - Top strip: time, title text, battery. The gear is always visible so Config is always reachable.
+  - Apps per row, icon size, app names, dock, tab bar, hidden apps.
+  - Neon scheme (Teal, Signal, Amber, Acid), grid background, scanlines, clock glow.
+  - Which page opens first, and the set-as-home reminder.
+- **Long-press an app**: pin to dock, pin to home, hide, App info, uninstall.
+- **Dock**: up to 5 pinned apps, visible on every page.
+- **Navigation**: swipe between pages or use the tabs. Back returns to Brief. Pressing Home returns to Brief.
+- **Look**: cyberpunk grid stage, neon plates, Oxanium + IBM Plex Mono type (ported from the original RIFT prototype).
+
+## Updates
+
+RIFT checks the `latest-apk` GitHub release on start (at most every 6 hours) and shows a notice on Brief when a newer build exists. Open **Config > Updates** to check now, download and install. Android asks once to let RIFT install apps.
+
+Every push to the `android` branch builds a new APK and replaces the release. All builds are signed with the key in `app/rift.keystore`, so each one installs over the last without losing settings. Because the key is public in this repo, only install updates from a repo you trust.
 
 ## Get the APK
 

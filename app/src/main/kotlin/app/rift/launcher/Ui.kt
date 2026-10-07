@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -41,9 +42,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Switch
@@ -84,8 +83,11 @@ import java.time.format.DateTimeFormatter
 
 private const val PAGE_BRIEF = 0
 private const val PAGE_APPS = 1
+private const val PAGE_CONFIG = 2
 
-private fun safeStart(context: Context, intent: Intent) {
+private const val SIX_HOURS_MS = 6 * 60 * 60 * 1000L
+
+fun safeStart(context: Context, intent: Intent) {
     try {
         context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     } catch (_: Exception) {
@@ -94,19 +96,22 @@ private fun safeStart(context: Context, intent: Intent) {
 }
 
 // ---------------------------------------------------------------------------
-// Root: status strip, two pages (Brief, Apps), dock, labelled tab bar.
+// Root: status strip, three pages (Brief, Apps, Config), dock, tab bar.
 // ---------------------------------------------------------------------------
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun LauncherRoot(settings: SettingsState, homeSignal: Int) {
+fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
-    val pagerState = rememberPagerState(pageCount = { 2 })
+    val pagerState = rememberPagerState(
+        initialPage = settings.int(Keys.START_PAGE, 0).coerceIn(0, 1),
+        pageCount = { 3 },
+    )
+    val updates = remember { UpdateController(context.applicationContext, settings, scope) }
 
     var apps by remember { mutableStateOf<List<AppInfo>>(emptyList()) }
-    var showSettings by remember { mutableStateOf(false) }
     val reload = remember { mutableIntStateOf(0) }
 
     // Load installed apps off the main thread, and again whenever one changes.
@@ -131,12 +136,26 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int) {
         onDispose { context.unregisterReceiver(receiver) }
     }
 
+    // On start: clear any old downloaded update, then check GitHub at most every 6 hours.
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) { Updater.cleanup(context) }
+        val last = settings.long(Keys.LAST_CHECK, 0L)
+        if (settings.autoUpdate && System.currentTimeMillis() - last > SIX_HOURS_MS) {
+            updates.check()
+        }
+    }
+
     // Pressing Home while already on the launcher returns to the Brief page.
     LaunchedEffect(homeSignal) {
         if (homeSignal > 0) {
-            showSettings = false
             focusManager.clearFocus()
             pagerState.animateScrollToPage(PAGE_BRIEF)
+        }
+    }
+    // The "Config" app shortcut jumps straight to the Config page.
+    LaunchedEffect(configSignal) {
+        if (configSignal > 0) {
+            pagerState.animateScrollToPage(PAGE_CONFIG)
         }
     }
     // Hide the keyboard whenever the page changes.
@@ -144,13 +163,10 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int) {
         focusManager.clearFocus()
     }
 
-    // Back always steps "up" one level: settings, then Apps, then Brief.
+    // Back steps "up" to Brief from the other pages.
     BackHandler {
-        when {
-            showSettings -> showSettings = false
-            pagerState.currentPage != PAGE_BRIEF ->
-                scope.launch { pagerState.animateScrollToPage(PAGE_BRIEF) }
-            else -> Unit
+        if (pagerState.currentPage != PAGE_BRIEF) {
+            scope.launch { pagerState.animateScrollToPage(PAGE_BRIEF) }
         }
     }
 
@@ -163,6 +179,12 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int) {
                 .addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED),
         )
     }
+    val openConfig: () -> Unit = {
+        scope.launch { pagerState.animateScrollToPage(PAGE_CONFIG) }
+    }
+
+    val hidden = settings.hiddenApps
+    val visibleApps = remember(apps, hidden) { apps.filter { it.packageName !in hidden } }
     val dockApps = settings.dock.mapNotNull { pkg -> apps.firstOrNull { it.packageName == pkg } }
 
     Box(
@@ -170,43 +192,47 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int) {
             .fillMaxSize()
             .background(Cyber.stage)
     ) {
-        GridBackdrop()
+        if (settings.showGrid) {
+            GridBackdrop()
+        }
         Column(
             Modifier
                 .fillMaxSize()
                 .systemBarsPadding()
                 .imePadding()
         ) {
-            StatusStrip(onClick = { showSettings = true })
+            StatusStrip(settings = settings, onOpenConfig = openConfig)
             HorizontalPager(state = pagerState, modifier = Modifier.weight(1f)) { page ->
-                if (page == PAGE_BRIEF) {
-                    BriefPage(
+                when (page) {
+                    PAGE_BRIEF -> BriefPage(
                         settings = settings,
-                        onOpenApps = { scope.launch { pagerState.animateScrollToPage(PAGE_APPS) } },
-                        onOpenSettings = { showSettings = true },
-                    )
-                } else {
-                    AppsPage(
                         apps = apps,
+                        updates = updates,
+                        onLaunch = launchApp,
+                        onOpenConfig = openConfig,
+                    )
+                    PAGE_APPS -> AppsPage(
+                        apps = visibleApps,
                         settings = settings,
                         onLaunch = launchApp,
-                        onOpenSettings = { showSettings = true },
+                        onOpenConfig = openConfig,
                     )
+                    else -> ConfigPage(settings = settings, apps = apps, updates = updates)
                 }
             }
-            Dock(dockApps = dockApps, settings = settings, onLaunch = launchApp)
-            TabBar(
-                current = pagerState.currentPage,
-                onSelect = { scope.launch { pagerState.animateScrollToPage(it) } },
-            )
+            if (settings.showDock) {
+                Dock(dockApps = dockApps, settings = settings, onLaunch = launchApp)
+            }
+            if (settings.showTabBar) {
+                TabBar(
+                    current = pagerState.currentPage,
+                    onSelect = { scope.launch { pagerState.animateScrollToPage(it) } },
+                )
+            }
         }
         if (settings.scanlines) {
             Scanlines()
         }
-    }
-
-    if (showSettings) {
-        SettingsSheet(settings = settings, onDismiss = { showSettings = false })
     }
 }
 
@@ -283,9 +309,33 @@ fun Plate(
     )
 }
 
-/** Time on the left, RIFT in the middle, battery on the right. Tap for settings. */
+/** A tappable highlighted plate used for notices (updates, set-as-home). */
 @Composable
-fun StatusStrip(onClick: () -> Unit) {
+private fun NoticePlate(kicker: String, title: String, body: String, onClick: () -> Unit) {
+    Plate(modifier = Modifier.clickable { onClick() }, highlight = true) {
+        Kicker(kicker, color = MaterialTheme.colorScheme.secondary)
+        Text(
+            text = title,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+        Text(
+            text = body,
+            color = Cyber.muted,
+            fontFamily = PlexMono,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+    }
+}
+
+/**
+ * Time on the left, title in the middle, battery and the gear on the right.
+ * Each part can be hidden in Config, but the gear is always there so Config
+ * can always be reached. Tapping anywhere on the strip opens Config too.
+ */
+@Composable
+fun StatusStrip(settings: SettingsState, onOpenConfig: () -> Unit) {
     val context = LocalContext.current
     var now by remember { mutableStateOf(LocalDateTime.now()) }
     var battery by remember { mutableStateOf(readBattery(context)) }
@@ -296,61 +346,102 @@ fun StatusStrip(onClick: () -> Unit) {
             delay(15_000)
         }
     }
-    val use24h = DateFormat.is24HourFormat(context)
+    val use24h = when (settings.int(Keys.CLOCK_MODE, 0)) {
+        1 -> false
+        2 -> true
+        else -> DateFormat.is24HourFormat(context)
+    }
     val timeText = now.format(DateTimeFormatter.ofPattern(if (use24h) "HH:mm" else "h:mm a"))
     val low = battery.first <= 20 && !battery.second
     val batteryText = (if (battery.second) "+" else "") + "${battery.first}%"
+    val title = settings.str(Keys.TITLE_TEXT, "RIFT").ifBlank { "RIFT" }
 
     Row(
         Modifier
             .fillMaxWidth()
-            .clickable { onClick() }
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .clickable { onOpenConfig() }
+            .padding(start = 16.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = timeText,
-            modifier = Modifier.weight(1f),
-            fontFamily = PlexMono,
-            fontSize = 12.sp,
-        )
-        Text(
-            text = "RIFT",
-            modifier = Modifier.weight(1f),
-            color = MaterialTheme.colorScheme.primary,
-            fontFamily = PlexMono,
-            fontSize = 12.sp,
-            letterSpacing = 4.sp,
-            textAlign = TextAlign.Center,
-        )
-        Text(
-            text = batteryText,
-            modifier = Modifier.weight(1f),
-            color = if (low) MaterialTheme.colorScheme.secondary else Cyber.fg,
-            fontFamily = PlexMono,
-            fontSize = 12.sp,
-            textAlign = TextAlign.End,
-        )
+        if (settings.bool(Keys.STRIP_TIME, true)) {
+            Text(
+                text = timeText,
+                modifier = Modifier.weight(1f),
+                fontFamily = PlexMono,
+                fontSize = 12.sp,
+            )
+        } else {
+            Spacer(Modifier.weight(1f))
+        }
+        if (settings.bool(Keys.STRIP_TITLE, true)) {
+            Text(
+                text = title,
+                modifier = Modifier.weight(1f),
+                color = MaterialTheme.colorScheme.primary,
+                fontFamily = PlexMono,
+                fontSize = 12.sp,
+                letterSpacing = 4.sp,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        } else {
+            Spacer(Modifier.weight(1f))
+        }
+        Row(
+            Modifier.weight(1f),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (settings.bool(Keys.STRIP_BATTERY, true)) {
+                Text(
+                    text = batteryText,
+                    color = if (low) MaterialTheme.colorScheme.secondary else Cyber.fg,
+                    fontFamily = PlexMono,
+                    fontSize = 12.sp,
+                )
+            }
+            Box(
+                Modifier
+                    .size(48.dp)
+                    .clickable { onOpenConfig() },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(text = "⚙", fontSize = 20.sp, color = MaterialTheme.colorScheme.primary)
+            }
+        }
     }
 }
 
 // ---------------------------------------------------------------------------
-// Brief page: glowing clock and a few plates.
+// Brief page: whatever modules you turned on, in the order you chose.
 // ---------------------------------------------------------------------------
 
 @Composable
-fun BriefPage(settings: SettingsState, onOpenApps: () -> Unit, onOpenSettings: () -> Unit) {
+fun BriefPage(
+    settings: SettingsState,
+    apps: List<AppInfo>,
+    updates: UpdateController,
+    onLaunch: (AppInfo) -> Unit,
+    onOpenConfig: () -> Unit,
+) {
     val context = LocalContext.current
     val primary = MaterialTheme.colorScheme.primary
-    val hot = MaterialTheme.colorScheme.secondary
+    val showSeconds = settings.bool(Keys.CLOCK_SECONDS, false)
+
     var now by remember { mutableStateOf(LocalDateTime.now()) }
     var battery by remember { mutableStateOf(readBattery(context)) }
     var alarm by remember { mutableStateOf(readNextAlarm(context)) }
     var isDefault by remember { mutableStateOf(isDefaultHome(context)) }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(showSeconds) {
         while (true) {
             now = LocalDateTime.now()
+            delay(if (showSeconds) 1_000L else 10_000L)
+        }
+    }
+    LaunchedEffect(Unit) {
+        while (true) {
             battery = readBattery(context)
             alarm = readNextAlarm(context)
             isDefault = isDefaultHome(context)
@@ -358,8 +449,15 @@ fun BriefPage(settings: SettingsState, onOpenApps: () -> Unit, onOpenSettings: (
         }
     }
 
-    val use24h = DateFormat.is24HourFormat(context)
-    val timeText = now.format(DateTimeFormatter.ofPattern(if (use24h) "HH:mm" else "h:mm"))
+    val use24h = when (settings.int(Keys.CLOCK_MODE, 0)) {
+        1 -> false
+        2 -> true
+        else -> DateFormat.is24HourFormat(context)
+    }
+    val pattern = (if (use24h) "HH:mm" else "h:mm") + (if (showSeconds) ":ss" else "")
+    val timeText = now.format(DateTimeFormatter.ofPattern(pattern))
+    val baseSize = listOf(56, 72, 92)[settings.int(Keys.CLOCK_SIZE, 1).coerceIn(0, 2)]
+    val clockSize = baseSize * (if (showSeconds) 0.72f else 1f)
     val dateText = now.format(DateTimeFormatter.ofPattern("EEEE, MMM d")).uppercase()
     val greeting = when {
         now.hour < 5 -> "Up late"
@@ -367,6 +465,7 @@ fun BriefPage(settings: SettingsState, onOpenApps: () -> Unit, onOpenSettings: (
         now.hour < 18 -> "Good afternoon"
         else -> "Good evening"
     }
+    val modules = settings.moduleOrder.filter { it !in settings.hiddenModules }
 
     Column(
         Modifier
@@ -375,100 +474,148 @@ fun BriefPage(settings: SettingsState, onOpenApps: () -> Unit, onOpenSettings: (
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Spacer(Modifier.height(12.dp))
-        Text(
-            text = timeText,
-            fontSize = 72.sp,
-            lineHeight = 76.sp,
-            fontWeight = FontWeight.Medium,
-            letterSpacing = (-2).sp,
-            style = TextStyle(
-                shadow = if (settings.glow) {
-                    Shadow(color = primary.copy(alpha = 0.6f), blurRadius = 36f)
-                } else {
-                    null
-                },
-            ),
-        )
-        Text(
-            text = dateText,
-            color = Cyber.muted,
-            fontFamily = PlexMono,
-            fontSize = 12.sp,
-            letterSpacing = 3.sp,
-        )
         Spacer(Modifier.height(4.dp))
 
-        if (!isDefault) {
-            Plate(
-                modifier = Modifier.clickable {
-                    safeStart(context, Intent(Settings.ACTION_HOME_SETTINGS))
-                },
-                highlight = true,
-            ) {
-                Kicker("Action", color = hot)
-                Text(
-                    text = "Make RIFT your home screen",
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(top = 4.dp),
+        when (val st = updates.status) {
+            is UpdateStatus.Available -> NoticePlate(
+                "Update",
+                "A new build is available",
+                "Build ${st.info.sha.take(7)}. Tap to review in Config.",
+                onOpenConfig,
+            )
+            is UpdateStatus.Downloading -> NoticePlate(
+                "Update",
+                "Downloading update",
+                "${(st.progress * 100).toInt()}% done.",
+                onOpenConfig,
+            )
+            is UpdateStatus.Ready -> NoticePlate(
+                "Update",
+                "Update downloaded",
+                "Tap to finish installing in Config.",
+                onOpenConfig,
+            )
+            else -> Unit
+        }
+
+        if (settings.bool(Keys.DEFAULT_REMINDER, true) && !isDefault) {
+            NoticePlate(
+                "Action",
+                "Make RIFT your home screen",
+                "Tap here, then pick RIFT under Home app.",
+            ) { safeStart(context, Intent(Settings.ACTION_HOME_SETTINGS)) }
+        }
+
+        modules.forEach { id ->
+            when (id) {
+                "clock" -> Text(
+                    text = timeText,
+                    fontSize = clockSize.sp,
+                    lineHeight = (clockSize * 1.05f).sp,
+                    fontWeight = FontWeight.Medium,
+                    letterSpacing = (-2).sp,
+                    maxLines = 1,
+                    softWrap = false,
+                    style = TextStyle(
+                        shadow = if (settings.glow) {
+                            Shadow(color = primary.copy(alpha = 0.6f), blurRadius = 36f)
+                        } else {
+                            null
+                        },
+                    ),
                 )
-                Text(
-                    text = "Tap here, then pick RIFT under Home app.",
+                "date" -> Text(
+                    text = dateText,
                     color = Cyber.muted,
                     fontFamily = PlexMono,
                     fontSize = 12.sp,
-                    modifier = Modifier.padding(top = 4.dp),
+                    letterSpacing = 3.sp,
                 )
+                "status" -> Plate {
+                    Kicker("Status")
+                    if (settings.bool(Keys.ST_GREETING, true)) {
+                        Text(
+                            text = greeting,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 20.sp,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                    }
+                    if (settings.bool(Keys.ST_BATTERY, true)) {
+                        val text = "Power ${battery.first}%" + if (battery.second) " (charging)" else ""
+                        Text(
+                            text = text,
+                            color = Cyber.muted,
+                            fontFamily = PlexMono,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
+                    }
+                    if (settings.bool(Keys.ST_ALARM, true)) {
+                        Text(
+                            text = alarm?.let { "Next alarm $it" } ?: "No alarm set",
+                            color = Cyber.muted,
+                            fontFamily = PlexMono,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(top = 2.dp),
+                        )
+                    }
+                }
+                "quick" -> QuickApps(settings = settings, apps = apps, onLaunch = onLaunch)
+                else -> Unit
             }
         }
 
-        Plate {
-            Kicker("Status")
-            Text(
-                text = greeting,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 20.sp,
-                modifier = Modifier.padding(top = 4.dp),
-            )
-            val batteryText = "Power ${battery.first}%" + if (battery.second) " (charging)" else ""
-            Text(
-                text = batteryText,
-                color = Cyber.muted,
-                fontFamily = PlexMono,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(top = 6.dp),
-            )
-            Text(
-                text = alarm?.let { "Next alarm $it" } ?: "No alarm set",
-                color = Cyber.muted,
-                fontFamily = PlexMono,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(top = 2.dp),
-            )
-        }
-
-        Plate(modifier = Modifier.clickable { onOpenApps() }) {
-            Kicker("Apps")
-            Text(
-                text = "Tap here, or swipe left, to see everything installed.",
-                color = Cyber.muted,
-                fontFamily = PlexMono,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(top = 4.dp),
-            )
-        }
-
-        Plate(modifier = Modifier.clickable { onOpenSettings() }) {
-            Kicker("Settings")
-            Text(
-                text = "Accent color, grid size, effects, dock.",
-                color = Cyber.muted,
-                fontFamily = PlexMono,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(top = 4.dp),
+        if (modules.isEmpty()) {
+            NoticePlate(
+                "Empty",
+                "Nothing on the Brief page",
+                "Tap here to open Config and switch modules on.",
+                onOpenConfig,
             )
         }
         Spacer(Modifier.height(8.dp))
+    }
+}
+
+/** The apps you pinned with "Pin to home", as a grid of your chosen width. */
+@Composable
+private fun QuickApps(settings: SettingsState, apps: List<AppInfo>, onLaunch: (AppInfo) -> Unit) {
+    val columns = settings.int(Keys.QUICK_COLUMNS, 4).coerceIn(3, 6)
+    val quickApps = settings.quick.mapNotNull { pkg -> apps.firstOrNull { it.packageName == pkg } }
+    if (quickApps.isEmpty()) {
+        Plate {
+            Kicker("Quick apps")
+            Text(
+                text = "Long-press any app on the Apps page and choose Pin to home.",
+                color = Cyber.muted,
+                fontFamily = PlexMono,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+    } else {
+        Column {
+            Kicker("Quick apps", color = Cyber.muted)
+            Spacer(Modifier.height(4.dp))
+            quickApps.chunked(columns).forEach { rowApps ->
+                Row(Modifier.fillMaxWidth()) {
+                    rowApps.forEach { app ->
+                        AppIcon(
+                            app = app,
+                            settings = settings,
+                            onLaunch = onLaunch,
+                            showLabel = settings.showLabels,
+                            iconDp = settings.iconDp,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    repeat(columns - rowApps.size) {
+                        Spacer(Modifier.weight(1f))
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -477,11 +624,24 @@ fun BriefPage(settings: SettingsState, onOpenApps: () -> Unit, onOpenSettings: (
 // ---------------------------------------------------------------------------
 
 @Composable
+private fun riftFieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedBorderColor = MaterialTheme.colorScheme.primary,
+    unfocusedBorderColor = Cyber.border,
+    focusedContainerColor = Cyber.surface,
+    unfocusedContainerColor = Cyber.surface,
+    cursorColor = MaterialTheme.colorScheme.primary,
+    focusedTextColor = Cyber.fg,
+    unfocusedTextColor = Cyber.fg,
+    focusedLabelColor = MaterialTheme.colorScheme.primary,
+    unfocusedLabelColor = Cyber.muted,
+)
+
+@Composable
 fun AppsPage(
     apps: List<AppInfo>,
     settings: SettingsState,
     onLaunch: (AppInfo) -> Unit,
-    onOpenSettings: () -> Unit,
+    onOpenConfig: () -> Unit,
 ) {
     var query by remember { mutableStateOf("") }
     val filtered = remember(apps, query) {
@@ -518,15 +678,7 @@ fun AppsPage(
                 },
                 singleLine = true,
                 shape = RectangleShape,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = accent,
-                    unfocusedBorderColor = Cyber.border,
-                    focusedContainerColor = Cyber.surface,
-                    unfocusedContainerColor = Cyber.surface,
-                    cursorColor = accent,
-                    focusedTextColor = Cyber.fg,
-                    unfocusedTextColor = Cyber.fg,
-                ),
+                colors = riftFieldColors(),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(
                     onSearch = { filtered.firstOrNull()?.let { onLaunch(it) } }
@@ -537,7 +689,7 @@ fun AppsPage(
                     .size(56.dp)
                     .background(Cyber.surface)
                     .border(1.dp, Cyber.border)
-                    .clickable { onOpenSettings() },
+                    .clickable { onOpenConfig() },
                 contentAlignment = Alignment.Center,
             ) {
                 Text(text = "⚙", fontSize = 22.sp, color = accent)
@@ -572,6 +724,7 @@ fun AppsPage(
                         settings = settings,
                         onLaunch = onLaunch,
                         showLabel = settings.showLabels,
+                        iconDp = settings.iconDp,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
@@ -592,11 +745,13 @@ fun AppIcon(
     settings: SettingsState,
     onLaunch: (AppInfo) -> Unit,
     showLabel: Boolean,
+    iconDp: Int,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     var menuOpen by remember { mutableStateOf(false) }
-    val pinned = app.packageName in settings.dock
+    val onDock = app.packageName in settings.dock
+    val onHome = app.packageName in settings.quick
 
     Box(modifier, contentAlignment = Alignment.Center) {
         Column(
@@ -610,7 +765,7 @@ fun AppIcon(
         ) {
             Box(
                 Modifier
-                    .size(60.dp)
+                    .size((iconDp + 16).dp)
                     .background(Cyber.surface2)
                     .border(1.dp, Cyber.border),
                 contentAlignment = Alignment.Center,
@@ -618,7 +773,7 @@ fun AppIcon(
                 Image(
                     bitmap = app.icon,
                     contentDescription = app.label,
-                    modifier = Modifier.size(44.dp),
+                    modifier = Modifier.size(iconDp.dp),
                 )
             }
             if (showLabel) {
@@ -642,10 +797,24 @@ fun AppIcon(
                 .border(1.dp, Cyber.border),
         ) {
             DropdownMenuItem(
-                text = { Text(if (pinned) "Remove from dock" else "Pin to dock") },
+                text = { Text(if (onDock) "Remove from dock" else "Pin to dock") },
                 onClick = {
                     menuOpen = false
                     settings.toggleDock(app.packageName)
+                },
+            )
+            DropdownMenuItem(
+                text = { Text(if (onHome) "Remove from home" else "Pin to home") },
+                onClick = {
+                    menuOpen = false
+                    settings.toggleQuick(app.packageName)
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("Hide app") },
+                onClick = {
+                    menuOpen = false
+                    settings.toggleHiddenApp(app.packageName)
                 },
             )
             DropdownMenuItem(
@@ -675,7 +844,7 @@ fun AppIcon(
     }
 }
 
-/** Pinned favourites, always visible on both pages. */
+/** Pinned favourites, visible on every page. */
 @Composable
 fun Dock(dockApps: List<AppInfo>, settings: SettingsState, onLaunch: (AppInfo) -> Unit) {
     Box(
@@ -709,6 +878,7 @@ fun Dock(dockApps: List<AppInfo>, settings: SettingsState, onLaunch: (AppInfo) -
                         settings = settings,
                         onLaunch = onLaunch,
                         showLabel = false,
+                        iconDp = minOf(settings.iconDp, 40),
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -729,7 +899,7 @@ fun TabBar(current: Int, onSelect: (Int) -> Unit) {
                 .background(Cyber.border)
         )
         Row(Modifier.fillMaxWidth()) {
-            listOf("Brief", "Apps").forEachIndexed { index, label ->
+            listOf("Brief", "Apps", "Config").forEachIndexed { index, label ->
                 val selected = index == current
                 Box(
                     Modifier
@@ -763,57 +933,273 @@ fun TabBar(current: Int, onSelect: (Int) -> Unit) {
 }
 
 // ---------------------------------------------------------------------------
-// Settings
+// Config page
 // ---------------------------------------------------------------------------
 
 @Composable
-private fun SettingToggle(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+private fun riftSwitchColors() = SwitchDefaults.colors(
+    checkedThumbColor = Cyber.stage,
+    checkedTrackColor = MaterialTheme.colorScheme.primary,
+    uncheckedThumbColor = Cyber.muted,
+    uncheckedTrackColor = Cyber.surface2,
+    uncheckedBorderColor = Cyber.border,
+)
+
+@Composable
+private fun Section(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Plate {
+        Kicker(title)
+        Column(
+            Modifier.padding(top = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            content = content,
+        )
+    }
+}
+
+@Composable
+private fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(
         Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(text = label, modifier = Modifier.weight(1f))
-        Switch(
-            checked = checked,
-            onCheckedChange = onChange,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = Cyber.stage,
-                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                uncheckedThumbColor = Cyber.muted,
-                uncheckedTrackColor = Cyber.surface2,
-                uncheckedBorderColor = Cyber.border,
-            ),
+        Switch(checked = checked, onCheckedChange = onChange, colors = riftSwitchColors())
+    }
+}
+
+@Composable
+private fun Chip(text: String, selected: Boolean, onClick: () -> Unit) {
+    val accent = MaterialTheme.colorScheme.primary
+    Box(
+        Modifier
+            .background(if (selected) accent else Cyber.surface)
+            .border(1.dp, if (selected) accent else Cyber.border)
+            .clickable { onClick() }
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+    ) {
+        Text(
+            text = text.uppercase(),
+            color = if (selected) Cyber.stage else Cyber.fg,
+            fontFamily = PlexMono,
+            fontSize = 12.sp,
+            letterSpacing = 1.sp,
         )
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsSheet(settings: SettingsState, onDismiss: () -> Unit) {
+private fun ChoiceRow(
+    label: String,
+    options: List<String>,
+    selected: Int,
+    onSelect: (Int) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Kicker(label, color = Cyber.muted)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            options.forEachIndexed { index, text ->
+                Chip(text = text, selected = index == selected) { onSelect(index) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RiftButton(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Button(onClick = onClick, modifier = modifier, shape = RectangleShape) {
+        Text(
+            text = text.uppercase(),
+            fontFamily = PlexMono,
+            fontSize = 12.sp,
+            letterSpacing = 1.sp,
+        )
+    }
+}
+
+@Composable
+private fun MoveButton(symbol: String, enabled: Boolean, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .size(44.dp)
+            .border(1.dp, Cyber.border)
+            .then(if (enabled) Modifier.clickable { onClick() } else Modifier),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = symbol,
+            color = if (enabled) MaterialTheme.colorScheme.primary else Cyber.border,
+        )
+    }
+}
+
+@Composable
+private fun ModuleRow(
+    label: String,
+    shown: Boolean,
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
+    onToggle: () -> Unit,
+    onUp: () -> Unit,
+    onDown: () -> Unit,
+) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Switch(checked = shown, onCheckedChange = { onToggle() }, colors = riftSwitchColors())
+        Text(text = label, modifier = Modifier.weight(1f).padding(start = 12.dp))
+        MoveButton("▲", canMoveUp, onUp)
+        Spacer(Modifier.width(6.dp))
+        MoveButton("▼", canMoveDown, onDown)
+    }
+}
+
+@Composable
+private fun MonoNote(text: String) {
+    Text(text = text, color = Cyber.muted, fontFamily = PlexMono, fontSize = 12.sp)
+}
+
+@Composable
+fun ConfigPage(settings: SettingsState, apps: List<AppInfo>, updates: UpdateController) {
     val context = LocalContext.current
     val accent = MaterialTheme.colorScheme.primary
+    var confirmReset by remember { mutableStateOf(false) }
+    val order = settings.moduleOrder
+    val hiddenModules = settings.hiddenModules
+    val hiddenApps = apps.filter { it.packageName in settings.hiddenApps }
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        containerColor = Cyber.bg,
-        shape = RectangleShape,
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Column(
-            Modifier
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp)
-                .padding(bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(22.dp),
-        ) {
-            Kicker("Settings")
+        Text(
+            text = "Everything you see on the home screen can be changed here.",
+            color = Cyber.muted,
+            fontFamily = PlexMono,
+            fontSize = 12.sp,
+        )
 
+        Section("Brief page") {
+            MonoNote("Switch modules on or off and use the arrows to reorder them.")
+            order.forEachIndexed { index, id ->
+                val label = BriefModules.firstOrNull { it.first == id }?.second ?: id
+                ModuleRow(
+                    label = label,
+                    shown = id !in hiddenModules,
+                    canMoveUp = index > 0,
+                    canMoveDown = index < order.lastIndex,
+                    onToggle = { settings.toggleModuleHidden(id) },
+                    onUp = { settings.moveModule(id, -1) },
+                    onDown = { settings.moveModule(id, 1) },
+                )
+            }
+            ChoiceRow(
+                label = "Quick apps per row",
+                options = listOf("3", "4", "5", "6"),
+                selected = settings.int(Keys.QUICK_COLUMNS, 4).coerceIn(3, 6) - 3,
+            ) { settings.putInt(Keys.QUICK_COLUMNS, it + 3) }
+        }
+
+        Section("Clock and status") {
+            ChoiceRow(
+                label = "Clock format",
+                options = listOf("System", "12h", "24h"),
+                selected = settings.int(Keys.CLOCK_MODE, 0).coerceIn(0, 2),
+            ) { settings.putInt(Keys.CLOCK_MODE, it) }
+            ChoiceRow(
+                label = "Clock size",
+                options = listOf("Small", "Medium", "Large"),
+                selected = settings.int(Keys.CLOCK_SIZE, 1).coerceIn(0, 2),
+            ) { settings.putInt(Keys.CLOCK_SIZE, it) }
+            ToggleRow("Show seconds", settings.bool(Keys.CLOCK_SECONDS, false)) {
+                settings.putBool(Keys.CLOCK_SECONDS, it)
+            }
+            ToggleRow("Greeting line", settings.bool(Keys.ST_GREETING, true)) {
+                settings.putBool(Keys.ST_GREETING, it)
+            }
+            ToggleRow("Battery line", settings.bool(Keys.ST_BATTERY, true)) {
+                settings.putBool(Keys.ST_BATTERY, it)
+            }
+            ToggleRow("Next alarm line", settings.bool(Keys.ST_ALARM, true)) {
+                settings.putBool(Keys.ST_ALARM, it)
+            }
+        }
+
+        Section("Top strip") {
+            ToggleRow("Show time", settings.bool(Keys.STRIP_TIME, true)) {
+                settings.putBool(Keys.STRIP_TIME, it)
+            }
+            ToggleRow("Show title", settings.bool(Keys.STRIP_TITLE, true)) {
+                settings.putBool(Keys.STRIP_TITLE, it)
+            }
+            OutlinedTextField(
+                value = settings.str(Keys.TITLE_TEXT, "RIFT"),
+                onValueChange = { settings.putStr(Keys.TITLE_TEXT, it.take(14)) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Title text") },
+                textStyle = TextStyle(fontFamily = PlexMono, fontSize = 14.sp),
+                singleLine = true,
+                shape = RectangleShape,
+                colors = riftFieldColors(),
+            )
+            ToggleRow("Show battery", settings.bool(Keys.STRIP_BATTERY, true)) {
+                settings.putBool(Keys.STRIP_BATTERY, it)
+            }
+            MonoNote("The gear stays visible so you can always get back here.")
+        }
+
+        Section("Apps and dock") {
+            ChoiceRow(
+                label = "Apps per row",
+                options = listOf("3", "4", "5", "6"),
+                selected = settings.columns - 3,
+            ) { settings.putInt(Keys.COLUMNS, it + 3) }
+            ChoiceRow(
+                label = "Icon size",
+                options = listOf("Small", "Medium", "Large"),
+                selected = settings.int(Keys.ICON_SIZE, 1).coerceIn(0, 2),
+            ) { settings.putInt(Keys.ICON_SIZE, it) }
+            ToggleRow("Show app names", settings.showLabels) {
+                settings.putBool(Keys.LABELS, it)
+            }
+            ToggleRow("Show dock", settings.showDock) { settings.putBool(Keys.DOCK_SHOW, it) }
+            ToggleRow("Show tab bar", settings.showTabBar) { settings.putBool(Keys.TAB_BAR, it) }
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Kicker("Hidden apps · ${hiddenApps.size}", color = Cyber.muted)
+                if (hiddenApps.isEmpty()) {
+                    MonoNote("None. Long-press an app and choose Hide app.")
+                } else {
+                    hiddenApps.forEach { app ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { settings.toggleHiddenApp(app.packageName) }
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(text = app.label, modifier = Modifier.weight(1f))
+                            Text(
+                                text = "UNHIDE",
+                                color = accent,
+                                fontFamily = PlexMono,
+                                fontSize = 12.sp,
+                                letterSpacing = 1.sp,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        Section("Look") {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Kicker("Neon scheme", color = Cyber.muted)
                 Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     Accents.forEachIndexed { index, scheme ->
                         val selected = index == settings.accentIndex
                         Column(
-                            Modifier.clickable { settings.setAccent(index) },
+                            Modifier.clickable { settings.putInt(Keys.ACCENT, index) },
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
@@ -837,46 +1223,72 @@ fun SettingsSheet(settings: SettingsState, onDismiss: () -> Unit) {
                     }
                 }
             }
+            ToggleRow("Grid background", settings.showGrid) { settings.putBool(Keys.GRID, it) }
+            ToggleRow("Scanlines", settings.scanlines) { settings.putBool(Keys.SCANLINES, it) }
+            ToggleRow("Clock glow", settings.glow) { settings.putBool(Keys.GLOW, it) }
+        }
 
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Kicker("Apps per row", color = Cyber.muted)
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    listOf(3, 4, 5).forEach { count ->
-                        val selected = count == settings.columns
-                        Box(
-                            Modifier
-                                .background(if (selected) accent else Cyber.surface)
-                                .border(1.dp, if (selected) accent else Cyber.border)
-                                .clickable { settings.updateColumns(count) }
-                                .padding(horizontal = 24.dp, vertical = 12.dp),
-                        ) {
-                            Text(
-                                text = "$count",
-                                color = if (selected) Cyber.stage else Cyber.fg,
-                                fontFamily = PlexMono,
-                                fontWeight = FontWeight.Medium,
-                            )
-                        }
-                    }
+        Section("Behavior") {
+            ChoiceRow(
+                label = "Open on",
+                options = listOf("Brief", "Apps"),
+                selected = settings.int(Keys.START_PAGE, 0).coerceIn(0, 1),
+            ) { settings.putInt(Keys.START_PAGE, it) }
+            ToggleRow(
+                "Remind me to set RIFT as home",
+                settings.bool(Keys.DEFAULT_REMINDER, true),
+            ) { settings.putBool(Keys.DEFAULT_REMINDER, it) }
+        }
+
+        Section("Updates") {
+            val status = updates.status
+            MonoNote("Installed: ${BuildConfig.VERSION_NAME} · ${BuildConfig.GIT_SHA.take(7)}")
+            val line = when (status) {
+                UpdateStatus.Idle -> "Not checked yet."
+                UpdateStatus.Checking -> "Checking GitHub…"
+                UpdateStatus.UpToDate -> "You are on the latest build."
+                is UpdateStatus.Available ->
+                    "New build ${status.info.sha.take(7)} is available " +
+                        "(%.1f MB).".format(status.info.sizeBytes / 1048576.0)
+                is UpdateStatus.Downloading ->
+                    "Downloading… ${(status.progress * 100).toInt()}%"
+                is UpdateStatus.Ready ->
+                    "Downloaded. If the installer did not open, allow RIFT to install apps, then tap Install again."
+                is UpdateStatus.Failed -> "Could not update: ${status.message}"
+            }
+            Text(text = line)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                RiftButton("Check now") { updates.check() }
+                when (status) {
+                    is UpdateStatus.Available ->
+                        RiftButton("Install") { updates.downloadAndInstall(status.info) }
+                    is UpdateStatus.Ready ->
+                        RiftButton("Install again") { updates.installAgain(status.info, status.file) }
+                    else -> Unit
                 }
             }
-
-            SettingToggle("Show app names", settings.showLabels) { settings.updateShowLabels(it) }
-            SettingToggle("Scanlines", settings.scanlines) { settings.updateScanlines(it) }
-            SettingToggle("Clock glow", settings.glow) { settings.updateGlow(it) }
-
-            Button(
-                onClick = { safeStart(context, Intent(Settings.ACTION_HOME_SETTINGS)) },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RectangleShape,
-            ) {
-                Text(
-                    text = "CHOOSE DEFAULT HOME APP",
-                    fontFamily = PlexMono,
-                    fontSize = 12.sp,
-                    letterSpacing = 2.sp,
-                )
+            ToggleRow("Check automatically", settings.autoUpdate) {
+                settings.putBool(Keys.AUTO_UPDATE, it)
             }
         }
+
+        Section("About") {
+            MonoNote("RIFT launcher ${BuildConfig.VERSION_NAME}")
+            RiftButton("Choose default home app", Modifier.fillMaxWidth()) {
+                safeStart(context, Intent(Settings.ACTION_HOME_SETTINGS))
+            }
+            RiftButton(
+                text = if (confirmReset) "Tap again to confirm reset" else "Reset all settings",
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                if (confirmReset) {
+                    settings.reset()
+                    confirmReset = false
+                } else {
+                    confirmReset = true
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
     }
 }
