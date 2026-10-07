@@ -6,7 +6,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.setValue
 
 class MainActivity : ComponentActivity() {
 
@@ -26,6 +28,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        CrashLog.install(this)
+        val crash = CrashLog.read(this)
         // Always light status/navigation icons: the stage is always dark.
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
@@ -35,8 +39,17 @@ class MainActivity : ComponentActivity() {
         // A fresh start never counts as a Home press, so the chosen start page is respected.
         if (intent?.action == ACTION_OPEN_CONFIG) configSignal.intValue++
         setContent {
+            var report by androidx.compose.runtime.remember {
+                androidx.compose.runtime.mutableStateOf(crash)
+            }
             RiftTheme(accent = Accents[settings.accentIndex]) {
-                LauncherRoot(
+                val shown = report
+                if (shown != null) {
+                    CrashScreen(shown) {
+                        CrashLog.clear(this@MainActivity)
+                        report = null
+                    }
+                } else LauncherRoot(
                     settings = settings,
                     homeSignal = homeSignal.intValue,
                     configSignal = configSignal.intValue,
