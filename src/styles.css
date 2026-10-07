@@ -1,0 +1,168 @@
+@import "tailwindcss";
+@import "@fontsource/oxanium/400.css";
+@import "@fontsource/oxanium/500.css";
+@import "@fontsource/oxanium/600.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+
+@theme {
+  --color-stage: #05070a;
+  --color-bg: #080b10;
+  --color-surface: #10161e;
+  --color-surface-2: #18212c;
+  --color-fg: #e7f2f5;
+  --color-muted: #93a4b5;
+  --color-primary: #2ee6c7;
+  --color-hot: #ff4d7a;
+  --color-border: #263140;
+  --font-sans: "Oxanium", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+html[data-accent="signal"] {
+  --color-primary: #ff4d7a;
+  --color-hot: #2ee6c7;
+}
+
+html[data-accent="amber"] {
+  --color-primary: #e6b15a;
+  --color-hot: #ff6a3d;
+}
+
+html[data-accent="acid"] {
+  --color-primary: #c6e85a;
+  --color-hot: #2ee6c7;
+}
+
+html[data-glow="low"] .clock-glow {
+  text-shadow: 0 0 18px color-mix(in oklab, var(--color-primary) 50%, transparent);
+}
+
+html[data-glow="high"] .clock-glow {
+  text-shadow: 0 0 24px color-mix(in oklab, var(--color-primary) 75%, transparent);
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  background: var(--color-stage);
+  color: var(--color-fg);
+}
+
+html {
+  color-scheme: dark;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+}
+
+::selection {
+  background: var(--color-primary);
+  color: var(--color-bg);
+}
+
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+
+  button:focus-visible,
+  [role="radio"]:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+}
+
+.stage {
+  background-color: var(--color-stage);
+  background-image:
+    linear-gradient(color-mix(in oklab, var(--color-border) 80%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in oklab, var(--color-border) 80%, transparent) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+.shell {
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.shell input,
+.shell textarea {
+  user-select: text;
+}
+
+.plate {
+  position: relative;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+}
+
+.plate-mark::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: -1px;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-top: 1px solid var(--color-primary);
+  border-left: 1px solid var(--color-primary);
+  pointer-events: none;
+}
+
+.scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+
+.scanline {
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent,
+    transparent 3px,
+    color-mix(in oklab, var(--color-fg) 14%, transparent) 4px
+  );
+  opacity: 0.18;
+}
+
+@keyframes rift-ticker {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.ticker-track {
+  display: flex;
+  width: max-content;
+  animation: rift-ticker 36s linear infinite;
+}
+
+html[data-motion="off"] .ticker-track,
+html[data-motion="off"] .motion-shift {
+  animation: none;
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ticker-track,
+  .motion-shift {
+    animation: none;
+    transition: none;
+  }
+}
