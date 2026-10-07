@@ -128,6 +128,7 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int, re
     val calc = remember { CalcState() }
     var shadeOpen by remember { mutableStateOf(false) }
     var searchSignal by remember { mutableIntStateOf(0) }
+    var configScreen by remember { mutableStateOf("") }
     var openFolder by remember { mutableStateOf<String?>(null) }
     var addTarget by remember { mutableStateOf<AppInfo?>(null) }
     val folderActions = remember { FolderActions({ openFolder = it }, { addTarget = it }) }
@@ -249,7 +250,9 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int, re
 
     // Back steps "up" to Brief from the other pages.
     BackHandler(enabled = !shadeOpen) {
-        if (pagerState.currentPage != PAGE_BRIEF) {
+        if (pagerState.currentPage == PAGE_CONFIG && configScreen.isNotEmpty()) {
+            configScreen = configScreen.substringBeforeLast('/', "")
+        } else if (pagerState.currentPage != PAGE_BRIEF) {
             scope.launch { pagerState.animateScrollToPage(PAGE_BRIEF) }
         }
     }
@@ -353,6 +356,8 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int, re
                         updates = updates,
                         info = info,
                         onRequestCalendar = requestCalendar,
+                        screen = configScreen,
+                        onScreen = { configScreen = it },
                     )
                 }
             }
@@ -1009,6 +1014,26 @@ fun AppIcon(
                     settings.toggleQuick(app.packageName)
                 },
             )
+            if (onDock) {
+                DropdownMenuItem(
+                    text = { Text("Move left in dock") },
+                    onClick = { settings.moveDock(app.packageName, -1) },
+                )
+                DropdownMenuItem(
+                    text = { Text("Move right in dock") },
+                    onClick = { settings.moveDock(app.packageName, 1) },
+                )
+            }
+            if (onHome) {
+                DropdownMenuItem(
+                    text = { Text("Move earlier on home") },
+                    onClick = { settings.moveQuick(app.packageName, -1) },
+                )
+                DropdownMenuItem(
+                    text = { Text("Move later on home") },
+                    onClick = { settings.moveQuick(app.packageName, 1) },
+                )
+            }
             DropdownMenuItem(
                 text = { Text("Add to folder…") },
                 onClick = {
@@ -1324,6 +1349,8 @@ fun ConfigPage(
     updates: UpdateController,
     info: InfoController,
     onRequestCalendar: () -> Unit,
+    screen: String,
+    onScreen: (String) -> Unit,
 ) {
     val context = LocalContext.current
     val accent = MaterialTheme.colorScheme.primary
@@ -1332,6 +1359,17 @@ fun ConfigPage(
     val hiddenModules = settings.hiddenModules
     val hiddenApps = apps.filter { it.packageName in settings.hiddenApps }
     LaunchedEffect(Unit) { info.refreshAccess() }
+    val parts = screen.split("/").filter { it.isNotEmpty() }
+    val top = ConfigTree.firstOrNull { it.id == parts.getOrNull(0) }
+    val sub = top?.children?.firstOrNull { it.id == parts.getOrNull(1) }
+    val showMenu: List<ConfigNode>? = when {
+        top == null -> ConfigTree
+        top.children.isNotEmpty() && sub == null -> top.children
+        else -> null
+    }
+    val contentId = if (showMenu != null) "" else (sub?.id ?: top?.id ?: "")
+    val heading = (sub ?: top)?.title ?: ""
+    val crumb = if (sub != null) top?.title ?: "" else "Settings"
 
     Column(
         Modifier
@@ -1340,402 +1378,449 @@ fun ConfigPage(
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text(
-            text = "Everything you see on the home screen can be changed here.",
-            color = Cyber.muted,
-            fontFamily = PlexMono,
-            fontSize = 12.sp,
-        )
 
-        Section("Brief page") {
-            MonoNote("Switch modules on or off and use the arrows to reorder them.")
-            order.forEachIndexed { index, id ->
-                val label = BriefModules.firstOrNull { it.first == id }?.second ?: id
-                ModuleRow(
-                    label = label,
-                    shown = id !in hiddenModules,
-                    canMoveUp = index > 0,
-                    canMoveDown = index < order.lastIndex,
-                    onToggle = { settings.toggleModuleHidden(id) },
-                    onUp = { settings.moveModule(id, -1) },
-                    onDown = { settings.moveModule(id, 1) },
-                )
-            }
-            ChoiceRow(
-                label = "Quick apps per row",
-                options = listOf("3", "4", "5", "6"),
-                selected = settings.int(Keys.QUICK_COLUMNS, 4).coerceIn(3, 6) - 3,
-            ) { settings.putInt(Keys.QUICK_COLUMNS, it + 3) }
-        }
-
-        Section("Information") {
-            OutlinedTextField(
-                value = settings.str(Keys.WEATHER_CITY, ""),
-                onValueChange = { settings.putStr(Keys.WEATHER_CITY, it.take(60)) },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Weather city") },
-                placeholder = { Text("e.g. Chicago") },
-                textStyle = TextStyle(fontFamily = PlexMono, fontSize = 14.sp),
-                singleLine = true,
-                shape = RectangleShape,
-                colors = riftFieldColors(),
-            )
-            info.weather?.let { MonoNote("Showing ${it.place}") }
-            info.weatherError?.let { MonoNote("Weather: $it") }
-            ChoiceRow(
-                label = "Temperature",
-                options = listOf("Auto", "°F", "°C"),
-                selected = settings.int(Keys.WEATHER_UNIT, 0).coerceIn(0, 2),
-            ) { settings.putInt(Keys.WEATHER_UNIT, it) }
-            OutlinedTextField(
-                value = settings.str(Keys.FEED_URL, ""),
-                onValueChange = { settings.putStr(Keys.FEED_URL, it.trim()) },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Headlines feed (RSS or Atom URL)") },
-                placeholder = { Text(DEFAULT_FEED) },
-                textStyle = TextStyle(fontFamily = PlexMono, fontSize = 12.sp),
-                singleLine = true,
-                shape = RectangleShape,
-                colors = riftFieldColors(),
-            )
-            MonoNote("Leave the feed empty to use BBC News. Tap the headlines on Brief to expand them.")
-        }
-
-        Section("Gestures") {
-            MonoNote("Swipes work on the Brief page once it is scrolled to its end.")
-            GestureSlots.forEach { slot ->
-                PickerRow(
-                    label = slot.second,
-                    options = GestureActions,
-                    selectedId = settings.str(slot.first, slot.third),
-                ) { settings.putStr(slot.first, it) }
-            }
-        }
-
-        Section("Access") {
-            MonoNote("RIFT only reads these on your phone. Nothing is uploaded.")
-            ToggleStatus("Calendar", info.calendarGranted, "Allow", onRequestCalendar)
-            ToggleStatus("Notifications", info.notificationAccess, "Open settings") {
-                safeStart(context, Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-            }
-            ToggleStatus("Do not disturb control", info.dndAccess, "Open settings") {
-                safeStart(context, Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
-            }
-            MonoNote(
-                "If the notification switch is greyed out, open App info, tap the three dots " +
-                    "and choose Allow restricted settings, then try again."
-            )
-            RiftButton("Open RIFT app info", Modifier.fillMaxWidth()) {
-                safeStart(
-                    context,
-                    Intent(
-                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                        Uri.parse("package:${context.packageName}"),
-                    ),
-                )
-            }
-        }
-
-        Section("Overlays") {
-            MonoNote("The shade slides over the home screen. Choose how it looks and what it shows.")
-            ChoiceRow(
-                label = "Shade background",
-                options = listOf("Light", "Medium", "Solid"),
-                selected = settings.int(Keys.SHADE_ALPHA, 1).coerceIn(0, 2),
-            ) { settings.putInt(Keys.SHADE_ALPHA, it) }
-            ToggleRow("Quick toggles in shade", settings.bool(Keys.SHADE_TOGGLES, true)) {
-                settings.putBool(Keys.SHADE_TOGGLES, it)
-            }
-            ToggleRow("Now playing in shade", settings.bool(Keys.SHADE_MEDIA, true)) {
-                settings.putBool(Keys.SHADE_MEDIA, it)
-            }
-            ToggleRow("Notifications in shade", settings.bool(Keys.SHADE_NOTES, true)) {
-                settings.putBool(Keys.SHADE_NOTES, it)
-            }
-            Kicker("Edge data stream", color = Cyber.muted)
-            ToggleRow("Show data stream", settings.bool(Keys.STREAM, true)) {
-                settings.putBool(Keys.STREAM, it)
-            }
-            ChoiceRow(
-                label = "Speed",
-                options = listOf("Slow", "Normal", "Fast"),
-                selected = settings.int(Keys.STREAM_SPEED, 1).coerceIn(0, 2),
-            ) { settings.putInt(Keys.STREAM_SPEED, it) }
-            ChoiceRow(
-                label = "Trail length",
-                options = listOf("Short", "Long", "Max"),
-                selected = settings.int(Keys.STREAM_TRAIL, 1).coerceIn(0, 2),
-            ) { settings.putInt(Keys.STREAM_TRAIL, it) }
-            ChoiceRow(
-                label = "Density",
-                options = listOf("Low", "Medium", "High"),
-                selected = settings.int(Keys.STREAM_DENSITY, 1).coerceIn(0, 2),
-            ) { settings.putInt(Keys.STREAM_DENSITY, it) }
-            ChoiceRow(
-                label = "Edges",
-                options = listOf("Both", "Left", "Right"),
-                selected = settings.int(Keys.STREAM_EDGE, 0).coerceIn(0, 2),
-            ) { settings.putInt(Keys.STREAM_EDGE, it) }
-            Kicker("Floating HUD over other apps", color = Cyber.muted)
-            var canDraw by remember { mutableStateOf(HudControl.canDraw(context)) }
-            LaunchedEffect(Unit) {
-                while (true) {
-                    canDraw = HudControl.canDraw(context)
-                    delay(1_500)
+        if (screen.isNotEmpty()) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable { onScreen(screen.substringBeforeLast('/', "")) }
+                    .padding(vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("‹", color = accent, fontSize = 22.sp, modifier = Modifier.padding(end = 10.dp))
+                Column {
+                    Kicker(crumb, color = Cyber.muted)
+                    Text(heading, fontWeight = FontWeight.SemiBold, fontSize = 20.sp)
                 }
             }
-            ToggleRow("Show floating HUD", settings.bool(Keys.HUD_ON, false)) { on ->
-                settings.putBool(Keys.HUD_ON, on)
-                if (on && !canDraw) {
+        }
+        if (showMenu != null) {
+            showMenu.forEach { node ->
+                MenuRow(node.title, node.desc) {
+                    onScreen(if (screen.isEmpty()) node.id else "$screen/${node.id}")
+                }
+            }
+        }
+        when (contentId) {
+            "modules" -> {
+            Section("Brief page") {
+                MonoNote("Switch modules on or off and use the arrows to reorder them.")
+                order.forEachIndexed { index, id ->
+                    val label = BriefModules.firstOrNull { it.first == id }?.second ?: id
+                    ModuleRow(
+                        label = label,
+                        shown = id !in hiddenModules,
+                        canMoveUp = index > 0,
+                        canMoveDown = index < order.lastIndex,
+                        onToggle = { settings.toggleModuleHidden(id) },
+                        onUp = { settings.moveModule(id, -1) },
+                        onDown = { settings.moveModule(id, 1) },
+                    )
+                }
+                ChoiceRow(
+                    label = "Quick apps per row",
+                    options = listOf("3", "4", "5", "6"),
+                    selected = settings.int(Keys.QUICK_COLUMNS, 4).coerceIn(3, 6) - 3,
+                ) { settings.putInt(Keys.QUICK_COLUMNS, it + 3) }
+            }
+            }
+            "clock" -> {
+            Section("Clock and status") {
+                ChoiceRow(
+                    label = "Clock format",
+                    options = listOf("System", "12h", "24h"),
+                    selected = settings.int(Keys.CLOCK_MODE, 0).coerceIn(0, 2),
+                ) { settings.putInt(Keys.CLOCK_MODE, it) }
+                ChoiceRow(
+                    label = "Clock size",
+                    options = listOf("Small", "Medium", "Large"),
+                    selected = settings.int(Keys.CLOCK_SIZE, 1).coerceIn(0, 2),
+                ) { settings.putInt(Keys.CLOCK_SIZE, it) }
+                ToggleRow("Show seconds", settings.bool(Keys.CLOCK_SECONDS, false)) {
+                    settings.putBool(Keys.CLOCK_SECONDS, it)
+                }
+                ToggleRow("Greeting line", settings.bool(Keys.ST_GREETING, true)) {
+                    settings.putBool(Keys.ST_GREETING, it)
+                }
+                ToggleRow("Battery line", settings.bool(Keys.ST_BATTERY, true)) {
+                    settings.putBool(Keys.ST_BATTERY, it)
+                }
+                ToggleRow("Next alarm line", settings.bool(Keys.ST_ALARM, true)) {
+                    settings.putBool(Keys.ST_ALARM, it)
+                }
+            }
+            }
+            "strip" -> {
+            Section("Top strip") {
+                ToggleRow("Show time", settings.bool(Keys.STRIP_TIME, true)) {
+                    settings.putBool(Keys.STRIP_TIME, it)
+                }
+                ToggleRow("Show title", settings.bool(Keys.STRIP_TITLE, true)) {
+                    settings.putBool(Keys.STRIP_TITLE, it)
+                }
+                OutlinedTextField(
+                    value = settings.str(Keys.TITLE_TEXT, "RIFT"),
+                    onValueChange = { settings.putStr(Keys.TITLE_TEXT, it.take(14)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Title text") },
+                    textStyle = TextStyle(fontFamily = PlexMono, fontSize = 14.sp),
+                    singleLine = true,
+                    shape = RectangleShape,
+                    colors = riftFieldColors(),
+                )
+                ToggleRow("Show battery", settings.bool(Keys.STRIP_BATTERY, true)) {
+                    settings.putBool(Keys.STRIP_BATTERY, it)
+                }
+                MonoNote("The gear stays visible so you can always get back here.")
+            }
+            }
+            "grid" -> {
+            Section("Apps and dock") {
+                ChoiceRow(
+                    label = "Apps per row",
+                    options = listOf("3", "4", "5", "6"),
+                    selected = settings.columns - 3,
+                ) { settings.putInt(Keys.COLUMNS, it + 3) }
+                ChoiceRow(
+                    label = "Icon size",
+                    options = listOf("Small", "Medium", "Large"),
+                    selected = settings.int(Keys.ICON_SIZE, 1).coerceIn(0, 2),
+                ) { settings.putInt(Keys.ICON_SIZE, it) }
+                ToggleRow("Show app names", settings.showLabels) {
+                    settings.putBool(Keys.LABELS, it)
+                }
+                ToggleRow("Show dock", settings.showDock) { settings.putBool(Keys.DOCK_SHOW, it) }
+                ToggleRow("Show tab bar", settings.showTabBar) { settings.putBool(Keys.TAB_BAR, it) }
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Kicker("Hidden apps · ${hiddenApps.size}", color = Cyber.muted)
+                    if (hiddenApps.isEmpty()) {
+                        MonoNote("None. Long-press an app and choose Hide app.")
+                    } else {
+                        hiddenApps.forEach { app ->
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable { settings.toggleHiddenApp(app.packageName) }
+                                    .padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(text = app.label, modifier = Modifier.weight(1f))
+                                Text(
+                                    text = "UNHIDE",
+                                    color = accent,
+                                    fontFamily = PlexMono,
+                                    fontSize = 12.sp,
+                                    letterSpacing = 1.sp,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            }
+            "pins" -> {
+            Section("Dock") {
+                PinList(settings, apps, settings.dock, { k, d -> settings.moveDock(k, d) }) { settings.toggleDock(it) }
+            }
+            Section("Quick apps on home") {
+                PinList(settings, apps, settings.quick, { k, d -> settings.moveQuick(k, d) }) { settings.toggleQuick(it) }
+            }
+            }
+            "folders" -> {
+            Section("Folders") {
+                val all = settings.folders
+                if (all.isEmpty()) {
+                    MonoNote("None yet. Long-press any app and choose Add to folder.")
+                }
+                all.forEach { f ->
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(f.name.ifBlank { "Folder" })
+                            MonoNote("${f.pkgs.size} apps")
+                        }
+                        RiftButton("Delete") { settings.deleteFolder(f.id) }
+                    }
+                }
+                MonoNote("Folders can sit in the Apps grid, the dock and the Quick apps block. Open one and use Pin.")
+            }
+            }
+            "weather" -> {
+            Section("Information") {
+                OutlinedTextField(
+                    value = settings.str(Keys.WEATHER_CITY, ""),
+                    onValueChange = { settings.putStr(Keys.WEATHER_CITY, it.take(60)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Weather city") },
+                    placeholder = { Text("e.g. Chicago") },
+                    textStyle = TextStyle(fontFamily = PlexMono, fontSize = 14.sp),
+                    singleLine = true,
+                    shape = RectangleShape,
+                    colors = riftFieldColors(),
+                )
+                info.weather?.let { MonoNote("Showing ${it.place}") }
+                info.weatherError?.let { MonoNote("Weather: $it") }
+                ChoiceRow(
+                    label = "Temperature",
+                    options = listOf("Auto", "°F", "°C"),
+                    selected = settings.int(Keys.WEATHER_UNIT, 0).coerceIn(0, 2),
+                ) { settings.putInt(Keys.WEATHER_UNIT, it) }
+                OutlinedTextField(
+                    value = settings.str(Keys.FEED_URL, ""),
+                    onValueChange = { settings.putStr(Keys.FEED_URL, it.trim()) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Headlines feed (RSS or Atom URL)") },
+                    placeholder = { Text(DEFAULT_FEED) },
+                    textStyle = TextStyle(fontFamily = PlexMono, fontSize = 12.sp),
+                    singleLine = true,
+                    shape = RectangleShape,
+                    colors = riftFieldColors(),
+                )
+                MonoNote("Leave the feed empty to use BBC News. Tap the headlines on Brief to expand them.")
+            }
+            }
+            "access" -> {
+            Section("Access") {
+                MonoNote("RIFT only reads these on your phone. Nothing is uploaded.")
+                ToggleStatus("Calendar", info.calendarGranted, "Allow", onRequestCalendar)
+                ToggleStatus("Notifications", info.notificationAccess, "Open settings") {
+                    safeStart(context, Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                }
+                ToggleStatus("Do not disturb control", info.dndAccess, "Open settings") {
+                    safeStart(context, Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
+                }
+                MonoNote(
+                    "If the notification switch is greyed out, open App info, tap the three dots " +
+                        "and choose Allow restricted settings, then try again."
+                )
+                RiftButton("Open RIFT app info", Modifier.fillMaxWidth()) {
                     safeStart(
                         context,
                         Intent(
-                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
                             Uri.parse("package:${context.packageName}"),
                         ),
                     )
                 }
             }
-            MonoNote(
-                if (canDraw) "Permission to draw over other apps: granted."
-                else "Needs permission to draw over other apps. Switch it on, then allow RIFT in the screen that opens."
-            )
-            ToggleRow("Time", settings.bool(Keys.HUD_TIME, true)) { settings.putBool(Keys.HUD_TIME, it) }
-            ToggleRow("Battery", settings.bool(Keys.HUD_BATTERY, true)) { settings.putBool(Keys.HUD_BATTERY, it) }
-            ToggleRow("Weather", settings.bool(Keys.HUD_WEATHER, true)) { settings.putBool(Keys.HUD_WEATHER, it) }
-            ToggleRow("Notification count", settings.bool(Keys.HUD_NOTES, true)) {
-                settings.putBool(Keys.HUD_NOTES, it)
             }
-            ToggleRow("Hide while RIFT is open", settings.bool(Keys.HUD_HIDE_HOME, true)) {
-                settings.putBool(Keys.HUD_HIDE_HOME, it)
-            }
-            ChoiceRow(
-                label = "HUD text size",
-                options = listOf("Small", "Medium", "Large"),
-                selected = settings.int(Keys.HUD_SIZE, 1).coerceIn(0, 2),
-            ) { settings.putInt(Keys.HUD_SIZE, it) }
-            ChoiceRow(
-                label = "HUD background",
-                options = listOf("Light", "Medium", "Solid"),
-                selected = settings.int(Keys.HUD_ALPHA, 1).coerceIn(0, 2),
-            ) { settings.putInt(Keys.HUD_ALPHA, it) }
-            RiftButton("Reset HUD position", Modifier.fillMaxWidth()) {
-                settings.putInt(Keys.HUD_X, -1)
-                settings.putInt(Keys.HUD_Y, -1)
-                HudControl.apply(context, settings)
-            }
-            MonoNote("Drag the HUD to move it. Tap it to see notifications, the torch and a way back to RIFT.")
-            val hudKey = listOf(
-                Keys.HUD_ON, Keys.HUD_TIME, Keys.HUD_BATTERY, Keys.HUD_WEATHER, Keys.HUD_NOTES,
-                Keys.HUD_HIDE_HOME, Keys.HUD_SIZE, Keys.HUD_ALPHA, Keys.HUD_X, Keys.HUD_Y,
-            ).joinToString { settings.str(it, "") + settings.int(it, -2) + settings.bool(it, false) }
-            LaunchedEffect(hudKey, canDraw) { HudControl.apply(context, settings) }
-        }
-
-        Section("Folders") {
-            val all = settings.folders
-            if (all.isEmpty()) {
-                MonoNote("None yet. Long-press any app and choose Add to folder.")
-            }
-            all.forEach { f ->
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(f.name.ifBlank { "Folder" })
-                        MonoNote("${f.pkgs.size} apps")
-                    }
-                    RiftButton("Delete") { settings.deleteFolder(f.id) }
+            "gestures" -> {
+            Section("Gestures") {
+                MonoNote("Swipes work on the Brief page once it is scrolled to its end.")
+                GestureSlots.forEach { slot ->
+                    PickerRow(
+                        label = slot.second,
+                        options = GestureActions,
+                        selectedId = settings.str(slot.first, slot.third),
+                    ) { settings.putStr(slot.first, it) }
                 }
             }
-            MonoNote("Folders can sit in the Apps grid, the dock and the Quick apps block. Open one and use Pin.")
-        }
-
-        Section("Clock and status") {
-            ChoiceRow(
-                label = "Clock format",
-                options = listOf("System", "12h", "24h"),
-                selected = settings.int(Keys.CLOCK_MODE, 0).coerceIn(0, 2),
-            ) { settings.putInt(Keys.CLOCK_MODE, it) }
-            ChoiceRow(
-                label = "Clock size",
-                options = listOf("Small", "Medium", "Large"),
-                selected = settings.int(Keys.CLOCK_SIZE, 1).coerceIn(0, 2),
-            ) { settings.putInt(Keys.CLOCK_SIZE, it) }
-            ToggleRow("Show seconds", settings.bool(Keys.CLOCK_SECONDS, false)) {
-                settings.putBool(Keys.CLOCK_SECONDS, it)
             }
-            ToggleRow("Greeting line", settings.bool(Keys.ST_GREETING, true)) {
-                settings.putBool(Keys.ST_GREETING, it)
+            "shade" -> {
+            Section("Shade") {
+                MonoNote("The shade slides over the home screen. Choose how it looks and what it shows.")
+                ChoiceRow(
+                    label = "Shade background",
+                    options = listOf("Light", "Medium", "Solid"),
+                    selected = settings.int(Keys.SHADE_ALPHA, 1).coerceIn(0, 2),
+                ) { settings.putInt(Keys.SHADE_ALPHA, it) }
+                ToggleRow("Quick toggles in shade", settings.bool(Keys.SHADE_TOGGLES, true)) {
+                    settings.putBool(Keys.SHADE_TOGGLES, it)
+                }
+                ToggleRow("Now playing in shade", settings.bool(Keys.SHADE_MEDIA, true)) {
+                    settings.putBool(Keys.SHADE_MEDIA, it)
+                }
+                ToggleRow("Notifications in shade", settings.bool(Keys.SHADE_NOTES, true)) {
+                    settings.putBool(Keys.SHADE_NOTES, it)
+                }
             }
-            ToggleRow("Battery line", settings.bool(Keys.ST_BATTERY, true)) {
-                settings.putBool(Keys.ST_BATTERY, it)
             }
-            ToggleRow("Next alarm line", settings.bool(Keys.ST_ALARM, true)) {
-                settings.putBool(Keys.ST_ALARM, it)
+            "stream" -> {
+            Section("Edge data stream") {
+                ToggleRow("Show data stream", settings.bool(Keys.STREAM, true)) {
+                    settings.putBool(Keys.STREAM, it)
+                }
+                ChoiceRow(
+                    label = "Speed",
+                    options = listOf("Slow", "Normal", "Fast"),
+                    selected = settings.int(Keys.STREAM_SPEED, 1).coerceIn(0, 2),
+                ) { settings.putInt(Keys.STREAM_SPEED, it) }
+                ChoiceRow(
+                    label = "Trail length",
+                    options = listOf("Short", "Long", "Max"),
+                    selected = settings.int(Keys.STREAM_TRAIL, 1).coerceIn(0, 2),
+                ) { settings.putInt(Keys.STREAM_TRAIL, it) }
+                ChoiceRow(
+                    label = "Density",
+                    options = listOf("Low", "Medium", "High"),
+                    selected = settings.int(Keys.STREAM_DENSITY, 1).coerceIn(0, 2),
+                ) { settings.putInt(Keys.STREAM_DENSITY, it) }
+                ChoiceRow(
+                    label = "Edges",
+                    options = listOf("Both", "Left", "Right"),
+                    selected = settings.int(Keys.STREAM_EDGE, 0).coerceIn(0, 2),
+                ) { settings.putInt(Keys.STREAM_EDGE, it) }
             }
-        }
-
-        Section("Top strip") {
-            ToggleRow("Show time", settings.bool(Keys.STRIP_TIME, true)) {
-                settings.putBool(Keys.STRIP_TIME, it)
             }
-            ToggleRow("Show title", settings.bool(Keys.STRIP_TITLE, true)) {
-                settings.putBool(Keys.STRIP_TITLE, it)
+            "hud" -> {
+            Section("Floating HUD over other apps") {
+                var canDraw by remember { mutableStateOf(HudControl.canDraw(context)) }
+                LaunchedEffect(Unit) {
+                    while (true) {
+                        canDraw = HudControl.canDraw(context)
+                        delay(1_500)
+                    }
+                }
+                ToggleRow("Show floating HUD", settings.bool(Keys.HUD_ON, false)) { on ->
+                    settings.putBool(Keys.HUD_ON, on)
+                    if (on && !canDraw) {
+                        safeStart(
+                            context,
+                            Intent(
+                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:${context.packageName}"),
+                            ),
+                        )
+                    }
+                }
+                MonoNote(
+                    if (canDraw) "Permission to draw over other apps: granted."
+                    else "Needs permission to draw over other apps. Switch it on, then allow RIFT in the screen that opens."
+                )
+                ToggleRow("Time", settings.bool(Keys.HUD_TIME, true)) { settings.putBool(Keys.HUD_TIME, it) }
+                ToggleRow("Battery", settings.bool(Keys.HUD_BATTERY, true)) { settings.putBool(Keys.HUD_BATTERY, it) }
+                ToggleRow("Weather", settings.bool(Keys.HUD_WEATHER, true)) { settings.putBool(Keys.HUD_WEATHER, it) }
+                ToggleRow("Notification count", settings.bool(Keys.HUD_NOTES, true)) {
+                    settings.putBool(Keys.HUD_NOTES, it)
+                }
+                ToggleRow("Hide while RIFT is open", settings.bool(Keys.HUD_HIDE_HOME, true)) {
+                    settings.putBool(Keys.HUD_HIDE_HOME, it)
+                }
+                ChoiceRow(
+                    label = "HUD text size",
+                    options = listOf("Small", "Medium", "Large"),
+                    selected = settings.int(Keys.HUD_SIZE, 1).coerceIn(0, 2),
+                ) { settings.putInt(Keys.HUD_SIZE, it) }
+                ChoiceRow(
+                    label = "HUD background",
+                    options = listOf("Light", "Medium", "Solid"),
+                    selected = settings.int(Keys.HUD_ALPHA, 1).coerceIn(0, 2),
+                ) { settings.putInt(Keys.HUD_ALPHA, it) }
+                RiftButton("Reset HUD position", Modifier.fillMaxWidth()) {
+                    settings.putInt(Keys.HUD_X, -1)
+                    settings.putInt(Keys.HUD_Y, -1)
+                    HudControl.apply(context, settings)
+                }
+                MonoNote("Drag the HUD to move it. Tap it to see notifications, the torch and a way back to RIFT.")
+                val hudKey = listOf(
+                    Keys.HUD_ON, Keys.HUD_TIME, Keys.HUD_BATTERY, Keys.HUD_WEATHER, Keys.HUD_NOTES,
+                    Keys.HUD_HIDE_HOME, Keys.HUD_SIZE, Keys.HUD_ALPHA, Keys.HUD_X, Keys.HUD_Y,
+                ).joinToString { settings.str(it, "") + settings.int(it, -2) + settings.bool(it, false) }
+                LaunchedEffect(hudKey, canDraw) { HudControl.apply(context, settings) }
             }
-            OutlinedTextField(
-                value = settings.str(Keys.TITLE_TEXT, "RIFT"),
-                onValueChange = { settings.putStr(Keys.TITLE_TEXT, it.take(14)) },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Title text") },
-                textStyle = TextStyle(fontFamily = PlexMono, fontSize = 14.sp),
-                singleLine = true,
-                shape = RectangleShape,
-                colors = riftFieldColors(),
-            )
-            ToggleRow("Show battery", settings.bool(Keys.STRIP_BATTERY, true)) {
-                settings.putBool(Keys.STRIP_BATTERY, it)
             }
-            MonoNote("The gear stays visible so you can always get back here.")
-        }
-
-        Section("Apps and dock") {
-            ChoiceRow(
-                label = "Apps per row",
-                options = listOf("3", "4", "5", "6"),
-                selected = settings.columns - 3,
-            ) { settings.putInt(Keys.COLUMNS, it + 3) }
-            ChoiceRow(
-                label = "Icon size",
-                options = listOf("Small", "Medium", "Large"),
-                selected = settings.int(Keys.ICON_SIZE, 1).coerceIn(0, 2),
-            ) { settings.putInt(Keys.ICON_SIZE, it) }
-            ToggleRow("Show app names", settings.showLabels) {
-                settings.putBool(Keys.LABELS, it)
-            }
-            ToggleRow("Show dock", settings.showDock) { settings.putBool(Keys.DOCK_SHOW, it) }
-            ToggleRow("Show tab bar", settings.showTabBar) { settings.putBool(Keys.TAB_BAR, it) }
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Kicker("Hidden apps · ${hiddenApps.size}", color = Cyber.muted)
-                if (hiddenApps.isEmpty()) {
-                    MonoNote("None. Long-press an app and choose Hide app.")
-                } else {
-                    hiddenApps.forEach { app ->
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .clickable { settings.toggleHiddenApp(app.packageName) }
-                                .padding(vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(text = app.label, modifier = Modifier.weight(1f))
-                            Text(
-                                text = "UNHIDE",
-                                color = accent,
-                                fontFamily = PlexMono,
-                                fontSize = 12.sp,
-                                letterSpacing = 1.sp,
-                            )
+            "look" -> {
+            Section("Look") {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Kicker("Neon scheme", color = Cyber.muted)
+                    Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        Accents.forEachIndexed { index, scheme ->
+                            val selected = index == settings.accentIndex
+                            Column(
+                                Modifier.clickable { settings.putInt(Keys.ACCENT, index) },
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Box(
+                                    Modifier
+                                        .size(44.dp)
+                                        .background(scheme.primary)
+                                        .then(
+                                            if (selected) Modifier.border(3.dp, Cyber.fg)
+                                            else Modifier.border(1.dp, Cyber.border)
+                                        )
+                                )
+                                Text(
+                                    text = scheme.name.uppercase(),
+                                    color = if (selected) Cyber.fg else Cyber.muted,
+                                    fontFamily = PlexMono,
+                                    fontSize = 10.sp,
+                                    letterSpacing = 1.sp,
+                                )
+                            }
                         }
                     }
                 }
+                ToggleRow("Grid background", settings.showGrid) { settings.putBool(Keys.GRID, it) }
+                ToggleRow("Scanlines", settings.scanlines) { settings.putBool(Keys.SCANLINES, it) }
+                ToggleRow("Clock glow", settings.glow) { settings.putBool(Keys.GLOW, it) }
             }
-        }
-
-        Section("Look") {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Kicker("Neon scheme", color = Cyber.muted)
-                Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Accents.forEachIndexed { index, scheme ->
-                        val selected = index == settings.accentIndex
-                        Column(
-                            Modifier.clickable { settings.putInt(Keys.ACCENT, index) },
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            Box(
-                                Modifier
-                                    .size(44.dp)
-                                    .background(scheme.primary)
-                                    .then(
-                                        if (selected) Modifier.border(3.dp, Cyber.fg)
-                                        else Modifier.border(1.dp, Cyber.border)
-                                    )
-                            )
-                            Text(
-                                text = scheme.name.uppercase(),
-                                color = if (selected) Cyber.fg else Cyber.muted,
-                                fontFamily = PlexMono,
-                                fontSize = 10.sp,
-                                letterSpacing = 1.sp,
-                            )
-                        }
-                    }
-                }
             }
-            ToggleRow("Grid background", settings.showGrid) { settings.putBool(Keys.GRID, it) }
-            ToggleRow("Scanlines", settings.scanlines) { settings.putBool(Keys.SCANLINES, it) }
-            ToggleRow("Clock glow", settings.glow) { settings.putBool(Keys.GLOW, it) }
-        }
-
-        Section("Behavior") {
-            ChoiceRow(
-                label = "Open on",
-                options = listOf("Brief", "Apps", "Deck"),
-                selected = settings.int(Keys.START_PAGE, 0).coerceIn(0, 2),
-            ) { settings.putInt(Keys.START_PAGE, it) }
-            ToggleRow(
-                "Remind me to set RIFT as home",
-                settings.bool(Keys.DEFAULT_REMINDER, true),
-            ) { settings.putBool(Keys.DEFAULT_REMINDER, it) }
-        }
-
-        Section("Updates") {
-            val status = updates.status
-            MonoNote("Installed: ${BuildConfig.VERSION_NAME} · ${BuildConfig.GIT_SHA.take(7)}")
-            val line = when (status) {
-                UpdateStatus.Idle -> "Not checked yet."
-                UpdateStatus.Checking -> "Checking GitHub…"
-                UpdateStatus.UpToDate -> "You are on the latest build."
-                is UpdateStatus.Available ->
-                    "New build ${status.info.sha.take(7)} is available " +
-                        "(%.1f MB).".format(status.info.sizeBytes / 1048576.0)
-                is UpdateStatus.Downloading ->
-                    "Downloading… ${(status.progress * 100).toInt()}%"
-                is UpdateStatus.Ready ->
-                    "Downloaded. If the installer did not open, allow RIFT to install apps, then tap Install again."
-                is UpdateStatus.Failed -> "Could not update: ${status.message}"
+            "behavior" -> {
+            Section("Behavior") {
+                ChoiceRow(
+                    label = "Open on",
+                    options = listOf("Brief", "Apps", "Deck"),
+                    selected = settings.int(Keys.START_PAGE, 0).coerceIn(0, 2),
+                ) { settings.putInt(Keys.START_PAGE, it) }
+                ToggleRow(
+                    "Remind me to set RIFT as home",
+                    settings.bool(Keys.DEFAULT_REMINDER, true),
+                ) { settings.putBool(Keys.DEFAULT_REMINDER, it) }
             }
-            Text(text = line)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                RiftButton("Check now") { updates.check() }
-                when (status) {
+            }
+            "updates" -> {
+            Section("Updates") {
+                val status = updates.status
+                MonoNote("Installed: ${BuildConfig.VERSION_NAME} · ${BuildConfig.GIT_SHA.take(7)}")
+                val line = when (status) {
+                    UpdateStatus.Idle -> "Not checked yet."
+                    UpdateStatus.Checking -> "Checking GitHub…"
+                    UpdateStatus.UpToDate -> "You are on the latest build."
                     is UpdateStatus.Available ->
-                        RiftButton("Install") { updates.downloadAndInstall(status.info) }
+                        "New build ${status.info.sha.take(7)} is available " +
+                            "(%.1f MB).".format(status.info.sizeBytes / 1048576.0)
+                    is UpdateStatus.Downloading ->
+                        "Downloading… ${(status.progress * 100).toInt()}%"
                     is UpdateStatus.Ready ->
-                        RiftButton("Install again") { updates.installAgain(status.info, status.file) }
-                    else -> Unit
+                        "Downloaded. If the installer did not open, allow RIFT to install apps, then tap Install again."
+                    is UpdateStatus.Failed -> "Could not update: ${status.message}"
+                }
+                Text(text = line)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    RiftButton("Check now") { updates.check() }
+                    when (status) {
+                        is UpdateStatus.Available ->
+                            RiftButton("Install") { updates.downloadAndInstall(status.info) }
+                        is UpdateStatus.Ready ->
+                            RiftButton("Install again") { updates.installAgain(status.info, status.file) }
+                        else -> Unit
+                    }
+                }
+                ToggleRow("Check automatically", settings.autoUpdate) {
+                    settings.putBool(Keys.AUTO_UPDATE, it)
                 }
             }
-            ToggleRow("Check automatically", settings.autoUpdate) {
-                settings.putBool(Keys.AUTO_UPDATE, it)
             }
-        }
-
-        Section("About") {
-            MonoNote("RIFT launcher ${BuildConfig.VERSION_NAME}")
-            RiftButton("Choose default home app", Modifier.fillMaxWidth()) {
-                safeStart(context, Intent(Settings.ACTION_HOME_SETTINGS))
-            }
-            RiftButton(
-                text = if (confirmReset) "Tap again to confirm reset" else "Reset all settings",
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                if (confirmReset) {
-                    settings.reset()
-                    confirmReset = false
-                } else {
-                    confirmReset = true
+            "about" -> {
+            Section("About") {
+                MonoNote("RIFT launcher ${BuildConfig.VERSION_NAME}")
+                RiftButton("Choose default home app", Modifier.fillMaxWidth()) {
+                    safeStart(context, Intent(Settings.ACTION_HOME_SETTINGS))
+                }
+                RiftButton(
+                    text = if (confirmReset) "Tap again to confirm reset" else "Reset all settings",
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    if (confirmReset) {
+                        settings.reset()
+                        confirmReset = false
+                    } else {
+                        confirmReset = true
+                    }
                 }
             }
+            }
+            else -> Unit
         }
         Spacer(Modifier.height(8.dp))
     }
@@ -1755,5 +1840,110 @@ private fun ToggleStatus(label: String, granted: Boolean, action: String, onClic
             )
         }
         if (!granted) RiftButton(action, onClick = onClick)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Config menu structure
+// ---------------------------------------------------------------------------
+
+class ConfigNode(
+    val id: String,
+    val title: String,
+    val desc: String,
+    val children: List<ConfigNode> = emptyList(),
+)
+
+val ConfigTree = listOf(
+    ConfigNode(
+        "home", "Home screen", "Modules, clock and the top strip",
+        listOf(
+            ConfigNode("modules", "Brief modules", "What shows, and in which order"),
+            ConfigNode("clock", "Clock and status", "Format, size, greeting"),
+            ConfigNode("strip", "Top strip", "Time, title and battery"),
+        ),
+    ),
+    ConfigNode(
+        "apps", "Apps and dock", "Grid, folders and pinned apps",
+        listOf(
+            ConfigNode("grid", "Grid and icons", "Columns, sizes, hidden apps"),
+            ConfigNode("pins", "Dock and quick apps", "Reorder and remove pinned items"),
+            ConfigNode("folders", "Folders", "Manage your folders"),
+        ),
+    ),
+    ConfigNode(
+        "info", "Information", "Weather, headlines and permissions",
+        listOf(
+            ConfigNode("weather", "Weather and headlines", "City, units, news feed"),
+            ConfigNode("access", "Permissions", "Calendar, notifications, do not disturb"),
+        ),
+    ),
+    ConfigNode("gestures", "Gestures", "Swipes, long-press and double-tap"),
+    ConfigNode(
+        "overlays", "Overlays", "Shade, data stream and floating HUD",
+        listOf(
+            ConfigNode("shade", "Shade", "Swipe-down panel"),
+            ConfigNode("stream", "Edge data stream", "The falling text on the edges"),
+            ConfigNode("hud", "Floating HUD", "Panel that floats over other apps"),
+        ),
+    ),
+    ConfigNode("look", "Look", "Neon scheme and effects"),
+    ConfigNode(
+        "system", "System", "Startup, updates and reset",
+        listOf(
+            ConfigNode("behavior", "Behavior", "Start page and reminders"),
+            ConfigNode("updates", "Updates", "Check GitHub for new builds"),
+            ConfigNode("about", "About", "Default home app and reset"),
+        ),
+    ),
+)
+
+@Composable
+private fun MenuRow(title: String, desc: String, onClick: () -> Unit) {
+    Plate(Modifier.clickable { onClick() }) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(title, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
+                Text(
+                    desc,
+                    color = Cyber.muted,
+                    fontFamily = PlexMono,
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            Text("›", color = MaterialTheme.colorScheme.primary, fontSize = 24.sp)
+        }
+    }
+}
+
+/** A reorderable list of dock or home items (apps and folders). */
+@Composable
+private fun PinList(
+    settings: SettingsState,
+    apps: List<AppInfo>,
+    keys: List<String>,
+    onMove: (String, Int) -> Unit,
+    onRemove: (String) -> Unit,
+) {
+    if (keys.isEmpty()) {
+        MonoNote("Nothing here yet. Long-press an app and choose Pin.")
+        return
+    }
+    val folders = settings.folders
+    keys.forEachIndexed { index, key ->
+        val label = if (key.startsWith("folder:")) {
+            (folders.firstOrNull { it.id == key.removePrefix("folder:") }?.name ?: "Folder") + "  (folder)"
+        } else {
+            apps.firstOrNull { it.packageName == key }?.label ?: key
+        }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(text = label, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            MoveButton("▲", index > 0) { onMove(key, -1) }
+            Spacer(Modifier.width(6.dp))
+            MoveButton("▼", index < keys.lastIndex) { onMove(key, 1) }
+            Spacer(Modifier.width(6.dp))
+            MoveButton("✕", true) { onRemove(key) }
+        }
     }
 }

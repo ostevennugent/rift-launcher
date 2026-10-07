@@ -243,6 +243,20 @@ class SettingsState(private val prefs: SharedPreferences) {
         putList(Keys.QUICK, quick - "folder:$id")
     }
 
+    private fun moveIn(key: String, item: String, delta: Int) {
+        val l = list(key).toMutableList()
+        val from = l.indexOf(item)
+        val to = from + delta
+        if (from < 0 || to !in l.indices) return
+        l.removeAt(from)
+        l.add(to, item)
+        putList(key, l)
+    }
+
+    fun moveDock(item: String, delta: Int) = moveIn(Keys.DOCK, item, delta)
+
+    fun moveQuick(item: String, delta: Int) = moveIn(Keys.QUICK, item, delta)
+
     // --- Changes -----------------------------------------------------------
 
     fun toggleDock(packageName: String) {
