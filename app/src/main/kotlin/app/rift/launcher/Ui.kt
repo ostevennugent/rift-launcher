@@ -1888,3 +1888,16 @@ private fun PinList(
         }
     }
 }
+
+@Composable
+internal fun riftFieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedBorderColor = MaterialTheme.colorScheme.primary,
+    unfocusedBorderColor = Cyber.border,
+    focusedContainerColor = Cyber.surface,
+    unfocusedContainerColor = Cyber.surface,
+    cursorColor = MaterialTheme.colorScheme.primary,
+    focusedTextColor = Cyber.fg,
+    unfocusedTextColor = Cyber.fg,
+    focusedLabelColor = MaterialTheme.colorScheme.primary,
+    unfocusedLabelColor = Cyber.muted,
+)
