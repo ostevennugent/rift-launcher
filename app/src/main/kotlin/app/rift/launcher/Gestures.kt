@@ -21,6 +21,8 @@ val GestureActions = listOf(
     "home" to "Go to Home grid",
     "brief" to "Go to Brief",
     "config" to "Open Config",
+    "sysshade" to "System notification shade (Shizuku)",
+    "sysqs" to "System quick settings (Shizuku)",
 )
 
 /** The gestures the user can remap: stored key, label, default action. */

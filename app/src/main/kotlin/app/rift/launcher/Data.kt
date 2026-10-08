@@ -103,6 +103,7 @@ object Keys {
     const val HUD_MODE = "hud_mode"
     const val HUD_ANCHOR = "hud_anchor"
     const val REPLACE_BAR = "replace_bar"
+    const val SYS_BAR = "sys_bar"
     const val HUD_TIME = "hud_time"
     const val HUD_BATTERY = "hud_battery"
     const val HUD_WEATHER = "hud_weather"

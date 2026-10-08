@@ -268,6 +268,14 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int, re
     var flash by remember { mutableStateOf<LaunchFlash?>(null) }
     var flashCount by remember { mutableIntStateOf(0) }
     val replaceBar = settings.bool(Keys.REPLACE_BAR, false)
+    val sysBar = settings.int(Keys.SYS_BAR, 0)
+    LaunchedEffect(sysBar, resumeSignal) {
+        if (sysBar > 0) {
+            var tries = 0
+            while (!ShizukuBridge.granted() && tries < 10) { delay(1_000); tries++ }
+            if (ShizukuBridge.granted()) ShizukuBridge.applyBar(sysBar)
+        }
+    }
     LaunchedEffect(replaceBar, resumeSignal) {
         val window = (context as? android.app.Activity)?.window ?: return@LaunchedEffect
         val controller = androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
@@ -329,6 +337,8 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int, re
             "home" -> scope.launch { pagerState.animateScrollToPage(PAGE_HOME) }
             "brief" -> scope.launch { pagerState.animateScrollToPage(PAGE_BRIEF) }
             "config" -> openConfig()
+            "sysshade" -> scope.launch { ShizukuBridge.expandShade() }
+            "sysqs" -> scope.launch { ShizukuBridge.expandSettings() }
             else -> Unit
         }
     }
@@ -1675,6 +1685,45 @@ fun ConfigPage(
                 ) { settings.putInt(Keys.STREAM_EDGE, it) }
             }
             }
+            "sysbar" -> {
+            Section("System status bar via Shizuku") {
+                var ready by remember { mutableStateOf(false) }
+                var running by remember { mutableStateOf(false) }
+                var report by remember { mutableStateOf("") }
+                val sbScope = rememberCoroutineScope()
+                LaunchedEffect(Unit) {
+                    while (true) {
+                        running = ShizukuBridge.running()
+                        ready = ShizukuBridge.granted()
+                        delay(1_500)
+                    }
+                }
+                ToggleStatus("Shizuku running", running, "Open Shizuku") {
+                    val i = context.packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
+                    if (i != null) safeStart(context, i)
+                }
+                ToggleStatus("RIFT allowed to use Shizuku", ready, "Allow") { ShizukuBridge.request() }
+                PickerRow(
+                    label = "Android status bar",
+                    options = listOf("0" to "Stock", "1" to "Blank bar", "2" to "Blank + lock shade"),
+                    selectedId = settings.int(Keys.SYS_BAR, 0).coerceIn(0, 2).toString(),
+                    onSelect = { id ->
+                        settings.putInt(Keys.SYS_BAR, id.toInt())
+                        sbScope.launch { report = ShizukuBridge.applyBar(id.toInt()) }
+                    },
+                )
+                MonoNote("Blank bar hides the clock and icons system-wide, so the HUD 'Status bar cover' (Floating HUD) shows through as your bar. 'Lock shade' also stops the stock pull-down; use RIFT's shade instead. Re-applied every time RIFT opens.")
+                RiftButton("Restore stock bar now", onClick = {
+                    settings.putInt(Keys.SYS_BAR, 0)
+                    sbScope.launch { report = ShizukuBridge.applyBar(0) }
+                })
+                RiftButton("Test: open system shade", onClick = {
+                    sbScope.launch { report = ShizukuBridge.expandShade().ifBlank { "sent" } }
+                })
+                if (report.isNotBlank()) MonoNote(report)
+                MonoNote("Gestures can also open the stock shade or quick settings: see Gestures.")
+            }
+            }
             "hud" -> {
             Section("Floating HUD over other apps") {
                 var canDraw by remember { mutableStateOf(HudControl.canDraw(context)) }
@@ -1930,6 +1979,7 @@ val ConfigTree = listOf(
             ConfigNode("shade", "Shade", "Swipe-down panel"),
             ConfigNode("stream", "Edge data stream", "The falling text on the edges"),
             ConfigNode("hud", "Floating HUD", "Panel that floats over other apps"),
+            ConfigNode("sysbar", "System bar (Shizuku)", "Blank or lock the Android status bar"),
         ),
     ),
     ConfigNode("look", "Look", "Neon scheme and effects"),
