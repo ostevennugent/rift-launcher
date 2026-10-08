@@ -22,6 +22,10 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.Box
@@ -382,14 +386,37 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int, re
         if (settings.bool(Keys.STREAM, true)) {
             DataStream(settings)
         }
+        // When RIFT's strip replaces the bar, it sits where the system bar was instead of below
+        // the (blank or hidden) bar's inset.
+        val coverBar = settings.bool(Keys.REPLACE_BAR, false)
+        val barNow = with(density) {
+            maxOf(
+                WindowInsets.statusBars.getTop(this),
+                WindowInsets.displayCutout.getTop(this),
+            ).toDp()
+        }
+        var barH by remember { mutableStateOf(0.dp) }
+        if (barNow > barH) barH = barNow
         Column(
             Modifier
                 .fillMaxSize()
-                .systemBarsPadding()
-                .displayCutoutPadding()
+                .then(
+                    if (coverBar) Modifier.windowInsetsPadding(
+                        WindowInsets.systemBars.only(
+                            androidx.compose.foundation.layout.WindowInsetsSides.Horizontal +
+                                androidx.compose.foundation.layout.WindowInsetsSides.Bottom,
+                        ),
+                    ) else Modifier.systemBarsPadding().displayCutoutPadding()
+                )
                 .imePadding()
         ) {
-            if (settings.bool(Keys.STRIP_SHOW, false) || settings.bool(Keys.REPLACE_BAR, false)) {
+            if (coverBar) {
+                StatusStrip(
+                    settings = settings,
+                    onOpenConfig = openConfig,
+                    height = barH.coerceAtLeast(24.dp),
+                )
+            } else if (settings.bool(Keys.STRIP_SHOW, false)) {
                 StatusStrip(settings = settings, onOpenConfig = openConfig)
             }
             HorizontalPager(state = pagerState, modifier = Modifier.weight(1f)) { page ->
@@ -568,7 +595,7 @@ internal fun NoticePlate(kicker: String, title: String, body: String, onClick: (
  * can always be reached. Tapping anywhere on the strip opens Config too.
  */
 @Composable
-fun StatusStrip(settings: SettingsState, onOpenConfig: () -> Unit) {
+fun StatusStrip(settings: SettingsState, onOpenConfig: () -> Unit, height: androidx.compose.ui.unit.Dp? = null) {
     val context = LocalContext.current
     var now by remember { mutableStateOf(LocalDateTime.now()) }
     var battery by remember { mutableStateOf(readBattery(context)) }
@@ -594,6 +621,7 @@ fun StatusStrip(settings: SettingsState, onOpenConfig: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
+            .then(if (height != null) Modifier.height(height) else Modifier)
             .clickable { onOpenConfig() }
             .padding(start = 16.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
