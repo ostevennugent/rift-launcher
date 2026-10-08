@@ -92,6 +92,8 @@ object Keys {
     const val SHADE_NOTES = "shade_notes"
     const val FOLDERS = "folders"
     const val WIDGETS = "widgets"
+    const val LAUNCH_ANIM = "launch_anim"
+    const val LAUNCH_FX = "launch_fx"
     const val STRIP_SHOW = "strip_show"
     const val TAB_STYLE = "tab_style"
     const val SHADE_TOOLS = "shade_tools"

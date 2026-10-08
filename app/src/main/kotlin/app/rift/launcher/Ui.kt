@@ -70,6 +70,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -102,9 +104,9 @@ private const val PAGE_CONFIG = 2
 
 private const val SIX_HOURS_MS = 6 * 60 * 60 * 1000L
 
-fun safeStart(context: Context, intent: Intent) {
+fun safeStart(context: Context, intent: Intent, options: android.os.Bundle? = null) {
     try {
-        context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), options)
     } catch (_: Exception) {
         // The target screen does not exist on this phone. Nothing sensible to do.
     }
@@ -261,14 +263,24 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int, re
         }
     }
 
+    val rootView = androidx.compose.ui.platform.LocalView.current
+    var flash by remember { mutableStateOf<LaunchFlash?>(null) }
+    var flashCount by remember { mutableIntStateOf(0) }
     val launchApp: (AppInfo) -> Unit = { app ->
+        val origin = LaunchOrigin.rect
+        LaunchOrigin.rect = null
         safeStart(
             context,
             Intent(Intent.ACTION_MAIN)
                 .addCategory(Intent.CATEGORY_LAUNCHER)
                 .setComponent(app.component)
                 .addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED),
+            launchOptions(rootView, settings.int(Keys.LAUNCH_ANIM, 1).coerceIn(0, 3), origin),
         )
+        if (settings.bool(Keys.LAUNCH_FX, true) && origin != null) {
+            flashCount++
+            flash = LaunchFlash(origin, flashCount)
+        }
     }
     val openConfig: () -> Unit = {
         scope.launch { pagerState.animateScrollToPage(PAGE_CONFIG) }
@@ -401,6 +413,9 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int, re
             calc = calc,
             onClose = { shadeOpen = false },
         )
+        flash?.let { f ->
+            LaunchFlashOverlay(f, MaterialTheme.colorScheme.primary) { flash = null }
+        }
         if (settings.scanlines) {
             Scanlines()
         }
@@ -873,12 +888,16 @@ fun AppIcon(
     val onDock = app.packageName in settings.dock
     val onHome = app.packageName in settings.quick
     val folderActions = LocalFolderActions.current
+    var iconBounds by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
 
     Box(modifier, contentAlignment = Alignment.Center) {
         Column(
             Modifier
                 .combinedClickable(
-                    onClick = { onLaunch(app) },
+                    onClick = {
+                        LaunchOrigin.rect = iconBounds
+                        onLaunch(app)
+                    },
                     onLongClick = { menuOpen = true },
                 )
                 .padding(horizontal = if (compact) 2.dp else 4.dp, vertical = if (compact) 2.dp else 8.dp),
@@ -887,6 +906,7 @@ fun AppIcon(
             Box(
                 Modifier
                     .size((iconDp + if (compact) 8 else 16).dp)
+                    .onGloballyPositioned { iconBounds = it.boundsInWindow() }
                     .background(Cyber.surface2)
                     .border(1.dp, Cyber.border),
                 contentAlignment = Alignment.Center,
@@ -1700,6 +1720,14 @@ fun ConfigPage(
                     }
                 }
                 ChoiceRow(
+                label = "App open animation",
+                options = listOf("System", "Zoom", "Reveal", "Fade"),
+                selected = settings.int(Keys.LAUNCH_ANIM, 1).coerceIn(0, 3),
+            ) { settings.putInt(Keys.LAUNCH_ANIM, it) }
+            ToggleRow("Neon flash when opening apps", settings.bool(Keys.LAUNCH_FX, true)) {
+                settings.putBool(Keys.LAUNCH_FX, it)
+            }
+            ChoiceRow(
                 label = "Page indicator",
                 options = listOf("Dots", "Labelled tabs"),
                 selected = settings.int(Keys.TAB_STYLE, 0).coerceIn(0, 1),
