@@ -353,3 +353,20 @@ class InfoController(
         }
     }
 }
+
+/** Short connection label for the status strips: Wi-Fi, Mobile, Ethernet or No signal. */
+fun networkLabel(context: Context): String {
+    val connectivity = context.getSystemService(ConnectivityManager::class.java) ?: return ""
+    val caps = try {
+        connectivity.getNetworkCapabilities(connectivity.activeNetwork)
+    } catch (_: Exception) {
+        null
+    }
+    return when {
+        caps == null -> "No signal"
+        caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "Wi-Fi"
+        caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "Mobile"
+        caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "Ethernet"
+        else -> "Online"
+    }
+}

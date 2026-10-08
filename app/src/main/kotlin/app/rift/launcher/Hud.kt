@@ -95,6 +95,7 @@ class HudService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+        removeView()
         ensureView()
         handler.removeCallbacks(tickRunnable)
         tickRunnable.run()
@@ -142,24 +143,72 @@ class HudService : Service() {
 
     private fun dp(v: Float) = (v * resources.displayMetrics.density).toInt()
 
+    private fun statusBarPx(): Int {
+        val id = resources.getIdentifier("status_bar_height", "dimen", "android")
+        return if (id > 0) resources.getDimensionPixelSize(id) else dp(28f)
+    }
+
     private fun ensureView() {
         if (root != null) return
-        val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val lp = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-            PixelFormat.TRANSLUCENT,
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            val savedX = settings.int(Keys.HUD_X, -1)
-            val savedY = settings.int(Keys.HUD_Y, -1)
-            x = if (savedX >= 0) savedX else dp(12f)
-            y = if (savedY >= 0) savedY else dp(120f)
+        val bar = settings.int(Keys.HUD_MODE, 0) == 1
+        val anchor = settings.int(Keys.HUD_ANCHOR, 0).coerceIn(0, 5)
+        val container = LinearLayout(this).apply {
+            orientation = if (bar) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
         }
-        container.setOnTouchListener(dragListener(lp))
+        val lp = if (bar) {
+            // A full-width strip drawn over the system status bar. Touches pass through it.
+            WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                statusBarPx(),
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT,
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                x = 0
+                y = 0
+            }
+        } else {
+            WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                PixelFormat.TRANSLUCENT,
+            ).apply {
+                val top = statusBarPx() + dp(4f)
+                when (anchor) {
+                    1 -> { gravity = Gravity.TOP or Gravity.START; x = dp(8f); y = top }
+                    2 -> { gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; x = 0; y = top }
+                    3 -> { gravity = Gravity.TOP or Gravity.END; x = dp(8f); y = top }
+                    4 -> { gravity = Gravity.BOTTOM or Gravity.START; x = dp(8f); y = dp(24f) }
+                    5 -> { gravity = Gravity.BOTTOM or Gravity.END; x = dp(8f); y = dp(24f) }
+                    else -> {
+                        gravity = Gravity.TOP or Gravity.START
+                        val savedX = settings.int(Keys.HUD_X, -1)
+                        val savedY = settings.int(Keys.HUD_Y, -1)
+                        x = if (savedX >= 0) savedX else dp(12f)
+                        y = if (savedY >= 0) savedY else dp(120f)
+                    }
+                }
+            }
+        }
+        if (Build.VERSION.SDK_INT >= 28) {
+            lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
+        if (!bar && anchor == 0) {
+            container.setOnTouchListener(dragListener(lp))
+        } else if (!bar) {
+            // Pinned in place: a tap still opens the panel, but it cannot be dragged.
+            container.setOnClickListener {
+                expanded = !expanded
+                render()
+            }
+        }
         try {
             windowManager.addView(container, lp)
             root = container
@@ -167,6 +216,45 @@ class HudService : Service() {
         } catch (_: Exception) {
             stopSelf()
         }
+    }
+
+    private fun renderBar(container: LinearLayout) {
+        val accent = Accents[settings.accentIndex].primary.toArgb()
+        val fg = Cyber.fg.toArgb()
+        container.setBackgroundColor(Color.BLACK)
+        container.gravity = Gravity.CENTER_VERTICAL
+        container.setPadding(dp(18f), 0, dp(18f), 0)
+        container.removeAllViews()
+
+        val left = mutableListOf<String>()
+        if (settings.bool(Keys.HUD_TIME, true)) {
+            val use24 = android.text.format.DateFormat.is24HourFormat(this)
+            left += LocalTime.now().format(DateTimeFormatter.ofPattern(if (use24) "HH:mm" else "h:mm"))
+        }
+        if (settings.bool(Keys.HUD_WEATHER, true)) {
+            settings.str(Keys.WEATHER_TEXT, "").takeIf { it.isNotBlank() }?.let { left += it }
+        }
+        if (settings.bool(Keys.HUD_NOTES, true)) {
+            val count = NotificationHub.items.size
+            if (count > 0) left += "✉$count"
+        }
+        val right = mutableListOf<String>()
+        right += networkLabel(this)
+        if (settings.bool(Keys.HUD_BATTERY, true)) {
+            val (pct, charging) = readBattery(this)
+            right += (if (charging) "+" else "") + "$pct%"
+        }
+
+        fun cell(value: String, gravity: Int, color: Int): TextView =
+            text(value, 12f, color, bold = false).apply {
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
+                setGravity(gravity or Gravity.CENTER_VERTICAL)
+                maxLines = 1
+            }
+        container.addView(cell(left.joinToString("  ·  "), Gravity.START, fg))
+        // The middle is left empty because it is usually where the camera sits.
+        container.addView(cell("", Gravity.CENTER, fg))
+        container.addView(cell(right.filter { it.isNotBlank() }.joinToString("  ·  "), Gravity.END, accent))
     }
 
     private fun removeView() {
@@ -242,6 +330,10 @@ class HudService : Service() {
 
     private fun render() {
         val container = root ?: return
+        if (settings.int(Keys.HUD_MODE, 0) == 1) {
+            renderBar(container)
+            return
+        }
         val accent = Accents[settings.accentIndex].primary.toArgb()
         val fg = Cyber.fg.toArgb()
         val muted = Cyber.muted.toArgb()

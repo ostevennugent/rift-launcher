@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.displayCutoutPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -266,6 +267,18 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int, re
     val rootView = androidx.compose.ui.platform.LocalView.current
     var flash by remember { mutableStateOf<LaunchFlash?>(null) }
     var flashCount by remember { mutableIntStateOf(0) }
+    val replaceBar = settings.bool(Keys.REPLACE_BAR, false)
+    LaunchedEffect(replaceBar, resumeSignal) {
+        val window = (context as? android.app.Activity)?.window ?: return@LaunchedEffect
+        val controller = androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
+        controller.systemBarsBehavior =
+            androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        if (replaceBar) {
+            controller.hide(androidx.core.view.WindowInsetsCompat.Type.statusBars())
+        } else {
+            controller.show(androidx.core.view.WindowInsetsCompat.Type.statusBars())
+        }
+    }
     var launchBusy by remember { mutableStateOf(false) }
     val launchApp: (AppInfo) -> Unit = { app ->
         if (!launchBusy) {
@@ -363,9 +376,10 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int, re
             Modifier
                 .fillMaxSize()
                 .systemBarsPadding()
+                .displayCutoutPadding()
                 .imePadding()
         ) {
-            if (settings.bool(Keys.STRIP_SHOW, false)) {
+            if (settings.bool(Keys.STRIP_SHOW, false) || settings.bool(Keys.REPLACE_BAR, false)) {
                 StatusStrip(settings = settings, onOpenConfig = openConfig)
             }
             HorizontalPager(state = pagerState, modifier = Modifier.weight(1f)) { page ->
@@ -548,10 +562,12 @@ fun StatusStrip(settings: SettingsState, onOpenConfig: () -> Unit) {
     val context = LocalContext.current
     var now by remember { mutableStateOf(LocalDateTime.now()) }
     var battery by remember { mutableStateOf(readBattery(context)) }
+    var net by remember { mutableStateOf(networkLabel(context)) }
     LaunchedEffect(Unit) {
         while (true) {
             now = LocalDateTime.now()
             battery = readBattery(context)
+            net = networkLabel(context)
             delay(15_000)
         }
     }
@@ -602,6 +618,15 @@ fun StatusStrip(settings: SettingsState, onOpenConfig: () -> Unit) {
             horizontalArrangement = Arrangement.End,
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            if (settings.bool(Keys.REPLACE_BAR, false)) {
+                val count = NotificationHub.items.size
+                Text(
+                    text = net + (if (count > 0) "  ✉$count" else "") + "  ",
+                    color = Cyber.muted,
+                    fontFamily = PlexMono,
+                    fontSize = 12.sp,
+                )
+            }
             if (settings.bool(Keys.STRIP_BATTERY, true)) {
                 Text(
                     text = batteryText,
@@ -1430,6 +1455,10 @@ fun ConfigPage(
             }
             "strip" -> {
             Section("Top strip") {
+            ToggleRow("Replace Android status bar inside RIFT", settings.bool(Keys.REPLACE_BAR, false)) {
+                settings.putBool(Keys.REPLACE_BAR, it)
+            }
+            MonoNote("Hides the system status bar while RIFT is open and shows RIFT's own strip with time, connection, notifications and battery. Swipe down from the top edge to peek at the real one. Other apps keep the system bar unless you use the HUD status bar below.")
             ToggleRow("Show top strip", settings.bool(Keys.STRIP_SHOW, false)) {
                 settings.putBool(Keys.STRIP_SHOW, it)
             }
@@ -1655,7 +1684,21 @@ fun ConfigPage(
                         delay(1_500)
                     }
                 }
-                ToggleRow("Show floating HUD", settings.bool(Keys.HUD_ON, false)) { on ->
+                PickerRow(
+                label = "HUD style",
+                options = listOf("0" to "Floating chip", "1" to "Status bar cover"),
+                selectedId = settings.int(Keys.HUD_MODE, 0).coerceIn(0, 1).toString(),
+            ) { settings.putInt(Keys.HUD_MODE, it.toInt()) }
+            PickerRow(
+                label = "Chip position",
+                options = listOf(
+                    "0" to "Free (drag it)", "1" to "Top left", "2" to "Top center",
+                    "3" to "Top right", "4" to "Bottom left", "5" to "Bottom right",
+                ),
+                selectedId = settings.int(Keys.HUD_ANCHOR, 0).coerceIn(0, 5).toString(),
+            ) { settings.putInt(Keys.HUD_ANCHOR, it.toInt()) }
+            MonoNote("Pick a corner to pin the chip in place: it cannot be dragged then, but a tap still opens it. Status bar cover draws a black strip over the system status bar in every app. Touches go through it, so pulling down the shade still works. The middle is kept empty for the camera.")
+            ToggleRow("Show floating HUD", settings.bool(Keys.HUD_ON, false)) { on ->
                     settings.putBool(Keys.HUD_ON, on)
                     if (on && !canDraw) {
                         safeStart(
@@ -1698,7 +1741,7 @@ fun ConfigPage(
                 MonoNote("Drag the HUD to move it. Tap it to see notifications, the torch and a way back to RIFT.")
                 val hudKey = listOf(
                     Keys.HUD_ON, Keys.HUD_TIME, Keys.HUD_BATTERY, Keys.HUD_WEATHER, Keys.HUD_NOTES,
-                    Keys.HUD_HIDE_HOME, Keys.HUD_SIZE, Keys.HUD_ALPHA, Keys.HUD_X, Keys.HUD_Y,
+                    Keys.HUD_HIDE_HOME, Keys.HUD_MODE, Keys.HUD_ANCHOR, Keys.HUD_SIZE, Keys.HUD_ALPHA, Keys.HUD_X, Keys.HUD_Y,
                 ).joinToString { settings.str(it, "") + settings.int(it, -2) + settings.bool(it, false) }
                 LaunchedEffect(hudKey, canDraw) { HudControl.apply(context, settings) }
             }
