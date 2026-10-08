@@ -94,6 +94,7 @@ object Keys {
     const val WIDGETS = "widgets"
     const val LAUNCH_ANIM = "launch_anim"
     const val LAUNCH_FX = "launch_fx"
+    const val LAUNCH_DELAY = "launch_delay"
     const val STRIP_SHOW = "strip_show"
     const val TAB_STYLE = "tab_style"
     const val SHADE_TOOLS = "shade_tools"

@@ -52,7 +52,7 @@ class LaunchFlash(val rect: Rect, val id: Int)
 fun LaunchFlashOverlay(flash: LaunchFlash, accent: Color, onDone: () -> Unit) {
     val progress = remember(flash.id) { Animatable(0f) }
     LaunchedEffect(flash.id) {
-        progress.animateTo(1f, tween(420, easing = FastOutSlowInEasing))
+        progress.animateTo(1f, tween(520, easing = FastOutSlowInEasing))
         onDone()
     }
     Canvas(Modifier.fillMaxSize()) {
@@ -62,25 +62,29 @@ fun LaunchFlashOverlay(flash: LaunchFlash, accent: Color, onDone: () -> Unit) {
         val top = lerp(flash.rect.top, full.top, p)
         val right = lerp(flash.rect.right, full.right, p)
         val bottom = lerp(flash.rect.bottom, full.bottom, p)
-        val fade = 1f - p
+        val fade = 1f - p * 0.6f
+        // The screen darkens and a neon frame blooms out of the icon.
+        drawRect(color = Color.Black.copy(alpha = 0.55f * p))
         drawRect(
-            color = accent.copy(alpha = 0.10f * fade),
+            color = accent.copy(alpha = 0.22f * fade),
             topLeft = Offset(left, top),
             size = Size(right - left, bottom - top),
         )
         drawRect(
-            color = accent.copy(alpha = 0.9f * fade),
+            color = accent.copy(alpha = fade),
             topLeft = Offset(left, top),
             size = Size(right - left, bottom - top),
-            style = Stroke(width = 2.dp.toPx()),
+            style = Stroke(width = 3.dp.toPx()),
         )
-        // A scan line sweeps down as the frame opens.
-        val y = lerp(flash.rect.top, size.height, p)
-        drawLine(
-            color = accent.copy(alpha = 0.6f * fade),
-            start = Offset(0f, y),
-            end = Offset(size.width, y),
-            strokeWidth = 1.5f.dp.toPx(),
-        )
+        // Three scan lines sweep down at different speeds.
+        for ((i, speed) in listOf(1f, 0.72f, 0.45f).withIndex()) {
+            val y = lerp(flash.rect.top, size.height, (p * speed).coerceAtMost(1f))
+            drawLine(
+                color = accent.copy(alpha = (0.85f - i * 0.2f) * fade),
+                start = Offset(0f, y),
+                end = Offset(size.width, y),
+                strokeWidth = (2.5f - i * 0.5f).dp.toPx(),
+            )
+        }
     }
 }

@@ -266,20 +266,36 @@ fun LauncherRoot(settings: SettingsState, homeSignal: Int, configSignal: Int, re
     val rootView = androidx.compose.ui.platform.LocalView.current
     var flash by remember { mutableStateOf<LaunchFlash?>(null) }
     var flashCount by remember { mutableIntStateOf(0) }
+    var launchBusy by remember { mutableStateOf(false) }
     val launchApp: (AppInfo) -> Unit = { app ->
-        val origin = LaunchOrigin.rect
-        LaunchOrigin.rect = null
-        safeStart(
-            context,
-            Intent(Intent.ACTION_MAIN)
-                .addCategory(Intent.CATEGORY_LAUNCHER)
-                .setComponent(app.component)
-                .addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED),
-            launchOptions(rootView, settings.int(Keys.LAUNCH_ANIM, 1).coerceIn(0, 3), origin),
-        )
-        if (settings.bool(Keys.LAUNCH_FX, true) && origin != null) {
-            flashCount++
-            flash = LaunchFlash(origin, flashCount)
+        if (!launchBusy) {
+            val origin = LaunchOrigin.rect
+            LaunchOrigin.rect = null
+            val start = {
+                safeStart(
+                    context,
+                    Intent(Intent.ACTION_MAIN)
+                        .addCategory(Intent.CATEGORY_LAUNCHER)
+                        .setComponent(app.component)
+                        .addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED),
+                    launchOptions(rootView, settings.int(Keys.LAUNCH_ANIM, 1).coerceIn(0, 3), origin),
+                )
+            }
+            val showFx = settings.bool(Keys.LAUNCH_FX, true) && origin != null
+            if (showFx) {
+                flashCount++
+                flash = LaunchFlash(origin!!, flashCount)
+            }
+            if (showFx && settings.bool(Keys.LAUNCH_DELAY, true)) {
+                launchBusy = true
+                scope.launch {
+                    delay(280)
+                    start()
+                    launchBusy = false
+                }
+            } else {
+                start()
+            }
         }
     }
     val openConfig: () -> Unit = {
@@ -1727,6 +1743,10 @@ fun ConfigPage(
             ToggleRow("Neon flash when opening apps", settings.bool(Keys.LAUNCH_FX, true)) {
                 settings.putBool(Keys.LAUNCH_FX, it)
             }
+            ToggleRow("Wait for the flash before opening (about 0.3 s)", settings.bool(Keys.LAUNCH_DELAY, true)) {
+                settings.putBool(Keys.LAUNCH_DELAY, it)
+            }
+            MonoNote("If your phone ignores the system animation, the flash still plays because RIFT draws it. Try Fade for a softer system transition.")
             ChoiceRow(
                 label = "Page indicator",
                 options = listOf("Dots", "Labelled tabs"),
